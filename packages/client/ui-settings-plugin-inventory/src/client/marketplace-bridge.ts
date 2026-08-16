@@ -74,8 +74,8 @@ export interface PluginMarketplaceApi {
   install: (spec: string, approveBuilds?: boolean) => Promise<MarketplaceMutationResult>
   update: (spec: string, approveBuilds?: boolean) => Promise<MarketplaceMutationResult>
   remove: (name: string) => Promise<MarketplaceMutationResult>
-  jobStatus: () => Promise<MarketplaceInstallerJob | undefined>
-  cancelJob: (id: string) => Promise<MarketplaceInstallerJob | undefined>
+  jobStatus?: () => Promise<MarketplaceInstallerJob | undefined>
+  cancelJob?: (id: string) => Promise<MarketplaceInstallerJob | undefined>
   restart: () => Promise<void>
 }
 
