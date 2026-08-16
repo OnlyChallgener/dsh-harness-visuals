@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
 import { fork } from 'node:child_process'
 import { EventEmitter, once } from 'node:events'
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { Writable } from 'node:stream'
-import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { writeWindowsClipboardText } from '../clipboard.mjs'
@@ -11,6 +13,8 @@ import {
   parsePluginList,
   pluginPackageName,
   pluginSpec,
+  readProfileDependencySnapshot,
+  restoreProfileDependencySnapshot,
 } from '../plugin-marketplace.mjs'
 import {
   harnessEnvironment,
@@ -101,6 +105,38 @@ test('managed pnpm fallback is pinned and never installs globally', () => {
   assert.match(posix, /--package=pnpm@11\.7\.0/)
   assert.doesNotMatch(windows, /install\s+-g|--global|@latest/)
   assert.doesNotMatch(posix, /install\s+-g|--global|@latest/)
+})
+
+test('rolls back only failed marketplace dependency edits', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-marketplace-rollback-'))
+  const profileDir = join(root, 'profiles', 'web')
+  const manifestFile = join(profileDir, 'package.json')
+  await mkdir(profileDir, { recursive: true })
+  try {
+    await writeFile(manifestFile, JSON.stringify({
+      name: 'web-profile',
+      dependencies: { existing: '1.0.0' },
+      dsh: { profile: { bundles: ['existing'] } },
+      custom: { keep: true },
+    }, null, 2))
+    const before = await readProfileDependencySnapshot(root)
+    assert.deepEqual(before, { existing: '1.0.0' })
+
+    await writeFile(manifestFile, JSON.stringify({
+      name: 'web-profile',
+      dependencies: { existing: '2.0.0', ghost: '9.9.9' },
+      dsh: { profile: { bundles: ['existing'] } },
+      custom: { keep: true },
+    }, null, 2))
+    assert.deepEqual(await restoreProfileDependencySnapshot(root, before), ['existing', 'ghost'])
+
+    const restored = JSON.parse(await readFile(manifestFile, 'utf8'))
+    assert.deepEqual(restored.dependencies, { existing: '1.0.0' })
+    assert.deepEqual(restored.dsh.profile.bundles, ['existing'])
+    assert.deepEqual(restored.custom, { keep: true })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 })
 
 test('normalizes pnpm plugin-list output to stable marketplace rows', () => {
