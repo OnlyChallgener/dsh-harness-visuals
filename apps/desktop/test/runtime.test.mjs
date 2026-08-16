@@ -9,7 +9,10 @@ import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { writeWindowsClipboardText } from '../clipboard.mjs'
 import {
+  classifyMarketplacePnpmFailure,
   managedPnpmShimContent,
+  mergeAllowBuildsDocument,
+  parseBlockedBuildPackages,
   parsePluginList,
   pluginPackageName,
   pluginSpec,
@@ -105,6 +108,32 @@ test('managed pnpm fallback is pinned and never installs globally', () => {
   assert.match(posix, /--package=pnpm@11\.7\.0/)
   assert.doesNotMatch(windows, /install\s+-g|--global|@latest/)
   assert.doesNotMatch(posix, /install\s+-g|--global|@latest/)
+})
+
+test('classifies pnpm safety failures without disabling the safety policy globally', () => {
+  assert.deepEqual(classifyMarketplacePnpmFailure('ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION'), { kind: 'release-age' })
+  assert.deepEqual(classifyMarketplacePnpmFailure('ERR_PNPM_NO_MATURE_MATCHING_VERSION'), { kind: 'release-age' })
+  assert.deepEqual(classifyMarketplacePnpmFailure('ERR_PNPM_META_FETCH_FAIL ETIMEDOUT'), { kind: 'transient-network' })
+  assert.deepEqual(classifyMarketplacePnpmFailure('ordinary failure'), { kind: 'other' })
+})
+
+test('extracts only exact packages whose build scripts pnpm blocked', () => {
+  const output = `ERR_PNPM_IGNORED_BUILDS\nIgnored build scripts: cloudflared@0.7.3, cpu-features@0.0.10, @scope/native-addon@2.4.1, ssh2@1.17.0.\nRun "pnpm approve-builds" to pick which dependencies should be allowed to run scripts.`
+  assert.deepEqual(parseBlockedBuildPackages(output), [
+    '@scope/native-addon',
+    'cloudflared',
+    'cpu-features',
+    'ssh2',
+  ])
+  assert.deepEqual(parseBlockedBuildPackages('git-hosted package "@scope/plugin@2.8.0" needs to execute build scripts'), ['@scope/plugin'])
+})
+
+test('merges approved build packages into the profile allowBuilds block without widening other entries', () => {
+  const before = `packages:\n  - .\nallowBuilds:\n  esbuild: true\n  risky-addon: false\nminimumReleaseAge: 1440\n`
+  const after = mergeAllowBuildsDocument(before, ['risky-addon', 'ssh2'])
+  assert.match(after, /allowBuilds:\n  esbuild: true\n  risky-addon: true\n  ssh2: true\nminimumReleaseAge:/)
+  assert.match(after, /minimumReleaseAge: 1440/)
+  assert.doesNotMatch(after, /approve-builds|minimumReleaseAge:\s*0/)
 })
 
 test('rolls back only failed marketplace dependency edits', async () => {

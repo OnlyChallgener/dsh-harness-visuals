@@ -5,6 +5,7 @@ import type { PluginInventoryLocaleKey } from './locales.ts'
 import { MarketplaceCatalogPanel } from './MarketplaceCatalogPanel.tsx'
 import type {
   MarketplaceEnvironment,
+  MarketplaceMutationResult,
   MarketplacePlugin,
   MarketplacePluginProvenance,
   MarketplacePluginSource,
@@ -72,6 +73,24 @@ function operationErrorDetail(error: unknown): string {
   const normalized = raw.replace(/\s+/gu, ' ').trim()
   if (normalized.length === 0) return 'Unknown plugin operation error.'
   return normalized.length > 1_200 ? `${normalized.slice(0, 1_197)}...` : normalized
+}
+
+async function mutationWithBuildApproval(
+  run: (approveBuilds: boolean) => Promise<MarketplaceMutationResult>,
+  t: PluginMarketplaceSettingsTabProps['t'],
+): Promise<MarketplaceMutationResult | undefined> {
+  let result = await run(false)
+  const packages = result.approvalRequired?.packages ?? []
+  if (packages.length === 0) return result
+  const approved = globalThis.confirm(
+    `${t('marketplaceBuildApprovalTitle')}\n\n${t('marketplaceBuildApprovalBody')}\n\n${packages.map(name => `• ${name}`).join('\n')}`,
+  )
+  if (!approved) return undefined
+  result = await run(true)
+  if (result.approvalRequired !== undefined) {
+    throw new Error(t('marketplaceBuildApprovalRetryFailed'))
+  }
+  return result
 }
 
 /** Render one installed package row with local details and update evidence. */
@@ -177,11 +196,7 @@ function InstalledPlugin({
   )
 }
 
-/**
- * Marketplace reads are intentionally started only when this tab mounts. The
- * parent Plugins section mounts tabs on first visit, so application startup
- * never probes pnpm, installed manifests, or public package metadata.
- */
+/** Marketplace work starts only when the Settings tab mounts. */
 export function PluginMarketplaceSettingsTab({ api, t }: PluginMarketplaceSettingsTabProps): ReactNode {
   const [view, setView] = useState<MarketView>('installed')
   const [phase, setPhase] = useState<LoadPhase>(api === undefined ? 'idle' : 'loading')
@@ -242,7 +257,8 @@ export function PluginMarketplaceSettingsTab({ api, t }: PluginMarketplaceSettin
     setOperation('install')
     setOperationError(undefined)
     try {
-      const result = await api.install(value)
+      const result = await mutationWithBuildApproval(approve => api.install(value, approve), t)
+      if (result === undefined) return
       setRestartRequired(current => current || result.restartRequired)
       setSpec('')
       try { setPlugins(await api.list()) } catch { /* install already succeeded; keep the existing snapshot */ }
@@ -257,8 +273,9 @@ export function PluginMarketplaceSettingsTab({ api, t }: PluginMarketplaceSettin
     if (api === undefined || environment?.pnpmAvailable !== true || operation !== undefined) return
     setOperation(`catalog:${id}`)
     setOperationError(undefined)
-    void api.install(value).then(
+    void mutationWithBuildApproval(approve => api.install(value, approve), t).then(
       async (result) => {
+        if (result === undefined) return
         setRestartRequired(current => current || result.restartRequired)
         try { setPlugins(await api.list()) } catch { /* catalog install succeeded; keep the existing snapshot */ }
       },
@@ -270,8 +287,9 @@ export function PluginMarketplaceSettingsTab({ api, t }: PluginMarketplaceSettin
     if (api === undefined || environment?.pnpmAvailable !== true || operation !== undefined || plugin.updateSpec === undefined) return
     setOperation(`update:${plugin.name}`)
     setOperationError(undefined)
-    void api.install(plugin.updateSpec).then(
+    void mutationWithBuildApproval(approve => api.update(plugin.updateSpec!, approve), t).then(
       async (result) => {
+        if (result === undefined) return
         setRestartRequired(current => current || result.restartRequired)
         const appliedVersion = plugin.latestVersion
         if (appliedVersion !== undefined) {

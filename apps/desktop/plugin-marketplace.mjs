@@ -11,12 +11,14 @@ const PLUGIN_SPEC_MAX_LENGTH = 512
 const MARKETPLACE_METADATA_TIMEOUT_MS = 4_000
 const MARKETPLACE_METADATA_CONCURRENCY = 4
 const MANAGED_PNPM_VERSION = '11.7.0'
+const BUILD_APPROVAL_TTL_MS = 10 * 60 * 1000
 const PACKAGE_NAME_PATTERN = /^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)$/iu
 const REGISTRY_SPEC_PATTERN = /^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)(?:@[a-z0-9][a-z0-9._+-]*)?$/iu
 const GITHUB_SPEC_PATTERN = /^github:[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*(?:#[a-z0-9][a-z0-9._\/-]*)?$/iu
 const SEMVER_PATTERN = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/u
 
 let mutationTail = Promise.resolve()
+const pendingBuildApprovals = new Map()
 
 /** Validate one package spec before it reaches the official `dsh plugin` forwarder. */
 export function pluginSpec(value) {
@@ -266,11 +268,7 @@ async function commandAvailable(command) {
   }
 }
 
-/**
- * Build the fallback shim text without user-controlled interpolation. The
- * version matches the repository's pinned package manager and is never
- * installed globally.
- */
+/** Build the fallback shim text without user-controlled interpolation. */
 export function managedPnpmShimContent(platform = process.platform) {
   if (platform === 'win32') {
     return `@echo off\r\nnpm.cmd exec --yes --package=pnpm@${MANAGED_PNPM_VERSION} -- pnpm %*\r\n`
@@ -278,12 +276,7 @@ export function managedPnpmShimContent(platform = process.platform) {
   return `#!/bin/sh\nexec npm exec --yes --package=pnpm@${MANAGED_PNPM_VERSION} -- pnpm "$@"\n`
 }
 
-/**
- * Prefer the user's pnpm. If Node.js provides npm but pnpm is absent, create a
- * private Desktop-only pnpm shim under DSH_HOME. npm downloads the pinned pnpm
- * into its normal cache on demand; system Node/npm and global packages are not
- * modified. This runs only after the Marketplace is opened.
- */
+/** Prefer system pnpm, otherwise create a Desktop-only pinned npm-exec shim. */
 async function ensurePluginPackageManager({ dshHome }) {
   if (await commandAvailable('pnpm')) return { available: true, mode: 'system' }
   if (!await commandAvailable('npm')) return { available: false, mode: 'missing' }
@@ -308,6 +301,11 @@ function marketplaceEnvironment(baseEnvironment, packageManager) {
 function webProfileManifestPath(dshHome) {
   if (typeof dshHome !== 'string' || dshHome.length === 0) return undefined
   return join(dshHome, 'profiles', 'web', 'package.json')
+}
+
+function webProfileWorkspacePath(dshHome) {
+  if (typeof dshHome !== 'string' || dshHome.length === 0) return undefined
+  return join(dshHome, 'profiles', 'web', 'pnpm-workspace.yaml')
 }
 
 function webProfilePackageManifestPath(dshHome, name) {
@@ -358,11 +356,7 @@ export async function readProfileDependencySnapshot(dshHome) {
   }
 }
 
-/**
- * Restore a failed mutation's dependency map without touching settings or the
- * bundle list. `dsh plugin` reconciles bundles only after pnpm exits cleanly,
- * while pnpm may write package.json before a later install step fails.
- */
+/** Restore only dependencies after a failed pnpm mutation. */
 export async function restoreProfileDependencySnapshot(dshHome, snapshot) {
   if (snapshot === undefined) return []
   const file = webProfileManifestPath(dshHome)
@@ -389,6 +383,81 @@ export async function restoreProfileDependencySnapshot(dshHome, snapshot) {
   manifest.dependencies = { ...snapshot }
   await writeFile(file, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
   return [...touched].sort()
+}
+
+function packageNameWithoutVersion(value) {
+  const trimmed = value.trim().replace(/[.,;]+$/u, '')
+  const separator = trimmed.lastIndexOf('@')
+  const candidate = separator > 0 ? trimmed.slice(0, separator) : trimmed
+  return PACKAGE_NAME_PATTERN.test(candidate) ? candidate : undefined
+}
+
+/** Extract packages pnpm refused to run build/prepare scripts for. */
+export function parseBlockedBuildPackages(output) {
+  if (typeof output !== 'string' || output.length === 0) return []
+  const found = new Set()
+  const ignoredIndex = output.search(/Ignored build scripts:/iu)
+  if (ignoredIndex >= 0) {
+    const tail = output.slice(ignoredIndex).replace(/^.*?Ignored build scripts:\s*/isu, '')
+    const segment = tail.split(/(?:Run|Use)\s+["'`]?pnpm\s+(?:approve-builds|ignored-builds)/iu, 1)[0]
+    for (const part of segment.split(/[\n,]/u)) {
+      const name = packageNameWithoutVersion(part)
+      if (name !== undefined) found.add(name)
+    }
+  }
+  for (const match of output.matchAll(/git-hosted package\s+"([^"]+)"\s+needs to execute build scripts/giu)) {
+    const name = packageNameWithoutVersion(match[1])
+    if (name !== undefined) found.add(name)
+  }
+  return [...found].sort()
+}
+
+/** Classify only failures for which the Desktop has a bounded safe recovery. */
+export function classifyMarketplacePnpmFailure(output) {
+  const blockedBuilds = parseBlockedBuildPackages(output)
+  if (/ERR_PNPM_IGNORED_BUILDS|ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED/iu.test(output) || blockedBuilds.length > 0) {
+    return { kind: 'build-approval', packages: blockedBuilds }
+  }
+  if (/ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION|ERR_PNPM_NO_MATURE_MATCHING_VERSION/iu.test(output)) {
+    return { kind: 'release-age' }
+  }
+  if (/ERR_PNPM_FETCH_5\d\d|ERR_PNPM_META_FETCH_FAIL|FetchError|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENETUNREACH|socket hang up|network timeout/iu.test(output)) {
+    return { kind: 'transient-network' }
+  }
+  return { kind: 'other' }
+}
+
+/** Pure YAML merge used by the guarded build-script approval path. */
+export function mergeAllowBuildsDocument(source, packages) {
+  const safePackages = [...new Set(packages.map(pluginPackageName))].sort()
+  if (safePackages.length === 0) return source
+  let yaml = typeof source === 'string' ? source : ''
+  const blockPattern = /^allowBuilds:\r?\n((?:[ \t]+[^\r\n]*(?:\r?\n|$))*)/mu
+  const match = blockPattern.exec(yaml)
+  if (match === null) {
+    const prefix = yaml.length === 0 || yaml.endsWith('\n') ? yaml : `${yaml}\n`
+    return `${prefix}allowBuilds:\n${safePackages.map(name => `  ${name}: true`).join('\n')}\n`
+  }
+  let block = match[1]
+  for (const name of safePackages) {
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
+    const linePattern = new RegExp(`^([ \\t]+${escaped}\\s*:\\s*)(?:true|false)\\s*$`, 'mu')
+    if (linePattern.test(block)) {
+      block = block.replace(linePattern, '$1true')
+    } else {
+      block = `${block}${block.length === 0 || block.endsWith('\n') ? '' : '\n'}  ${name}: true\n`
+    }
+  }
+  return yaml.replace(blockPattern, `allowBuilds:\n${block}`)
+}
+
+async function allowProfileBuilds(dshHome, packages) {
+  const file = webProfileWorkspacePath(dshHome)
+  if (file === undefined) throw new Error('Cannot locate the Web profile pnpm-workspace.yaml for build approval.')
+  let before = ''
+  try { before = await readFile(file, 'utf8') } catch { /* create the file below */ }
+  const after = mergeAllowBuildsDocument(before, packages)
+  if (after !== before) await writeFile(file, after, 'utf8')
 }
 
 function commandFailureDetail(error) {
@@ -446,48 +515,130 @@ function serializeMutation(operation) {
   return run
 }
 
-async function runProfileMutation(options, args, { verify } = {}) {
+function mutationRequest(value) {
+  if (typeof value === 'string') return { spec: pluginSpec(value), mode: 'install', approveBuilds: false }
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid plugin operation request.')
+  const spec = pluginSpec(value.spec)
+  const mode = value.mode === 'update' ? 'update' : value.mode === undefined || value.mode === 'install' ? 'install' : undefined
+  if (mode === undefined || (value.approveBuilds !== undefined && typeof value.approveBuilds !== 'boolean')) {
+    throw new Error('Invalid plugin operation request.')
+  }
+  return { spec, mode, approveBuilds: value.approveBuilds === true }
+}
+
+function approvalKey(mode, spec) {
+  return `${mode}:${spec}`
+}
+
+function pendingApproval(key) {
+  const value = pendingBuildApprovals.get(key)
+  if (value === undefined) return undefined
+  if (Date.now() - value.createdAt > BUILD_APPROVAL_TTL_MS) {
+    pendingBuildApprovals.delete(key)
+    return undefined
+  }
+  return value
+}
+
+async function runPluginCommandWithRecovery(options, args, { releaseAgeBypass = false } = {}) {
+  try {
+    return await runPluginCommand({ ...options, args })
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    const failure = classifyMarketplacePnpmFailure(detail)
+    if (failure.kind === 'release-age' && releaseAgeBypass && (args[0] === 'add' || args[0] === 'remove')) {
+      return runPluginCommand({ ...options, args: [args[0], '--config.minimumReleaseAge=0', ...args.slice(1)] })
+    }
+    if (failure.kind === 'transient-network' && (args[0] === 'add' || args[0] === 'remove')) {
+      return runPluginCommand({ ...options, args })
+    }
+    throw error
+  }
+}
+
+async function runProfileMutation(options, args, {
+  verify,
+  releaseAgeBypass = false,
+  approval,
+} = {}) {
   const before = await readProfileDependencySnapshot(options.dshHome)
   try {
-    const result = await runPluginCommand({ ...options, args })
+    if (approval?.approveBuilds === true) {
+      const pending = pendingApproval(approval.key)
+      if (pending === undefined || pending.packages.length === 0) {
+        throw new Error('Build-script approval expired or does not match a pending plugin operation. Start the operation again.')
+      }
+      await allowProfileBuilds(options.dshHome, pending.packages)
+    }
+    const result = await runPluginCommandWithRecovery(options, args, { releaseAgeBypass })
     if (typeof verify === 'function') await verify()
+    if (approval?.key !== undefined) pendingBuildApprovals.delete(approval.key)
     return result
   } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    const failure = classifyMarketplacePnpmFailure(detail)
+    let approvalRequired
+    if (failure.kind === 'build-approval' && failure.packages.length > 0 && approval?.key !== undefined) {
+      if (approval.approveBuilds !== true) {
+        pendingBuildApprovals.set(approval.key, { packages: failure.packages, createdAt: Date.now() })
+        approvalRequired = failure.packages
+      } else {
+        pendingBuildApprovals.delete(approval.key)
+      }
+    }
+
     let rolledBack = []
     try {
       rolledBack = await restoreProfileDependencySnapshot(options.dshHome, before)
     } catch {
       rolledBack = []
     }
+    if (approvalRequired !== undefined) {
+      return { approvalRequired, rolledBack }
+    }
     if (rolledBack.length === 0) throw error
-    const detail = error instanceof Error ? error.message : String(error)
     throw new Error(`${detail}\nDesktop rolled back the failed Web profile dependency change: ${rolledBack.join(', ')}`)
   }
 }
 
-/** Install one package spec into the Web profile. A restart is intentionally left to the caller. */
+/** Install/update one package spec into the Web profile. Build-script approval is an explicit two-step handshake. */
 export function installPlugin(options, value) {
-  const spec = pluginSpec(value)
+  const request = mutationRequest(value)
+  if (request.mode === 'update' && exactRegistryPluginVersion(request.spec) === undefined) {
+    throw new Error('Marketplace updates require an exact npm package version.')
+  }
+  const key = approvalKey(request.mode, request.spec)
   return serializeMutation(async () => {
     let verification
-    await runProfileMutation(options, ['add', spec], {
+    const mutation = await runProfileMutation(options, ['add', request.spec], {
+      releaseAgeBypass: request.mode === 'update',
+      approval: { key, approveBuilds: request.approveBuilds },
       verify: async () => {
-        verification = await verifyExactPluginInstall(options.dshHome, spec)
+        verification = await verifyExactPluginInstall(options.dshHome, request.spec)
       },
     })
+    if (mutation?.approvalRequired !== undefined) {
+      return {
+        restartRequired: false,
+        approvalRequired: {
+          kind: 'build-scripts',
+          packages: mutation.approvalRequired,
+        },
+      }
+    }
     return {
-      installed: spec,
+      installed: request.spec,
       ...(verification === undefined ? {} : { installedVersion: verification.installedVersion }),
       restartRequired: true,
     }
   })
 }
 
-/** Remove one installed dependency from the Web profile. */
+/** Remove one installed dependency from the Web profile. Release-age recovery is scoped to this user action only. */
 export function removePlugin(options, value) {
   const name = pluginPackageName(value)
   return serializeMutation(async () => {
-    await runProfileMutation(options, ['remove', name])
+    await runProfileMutation(options, ['remove', name], { releaseAgeBypass: true })
     return { removed: name, restartRequired: true }
   })
 }

@@ -27,14 +27,27 @@ export interface MarketplacePlugin {
   updateSpec?: string
 }
 
+export interface MarketplaceBuildApproval {
+  kind: 'build-scripts'
+  packages: string[]
+}
+
 export interface MarketplaceMutationResult {
   restartRequired: boolean
+  approvalRequired?: MarketplaceBuildApproval
+}
+
+type MarketplaceInstallRequest = string | {
+  spec: string
+  mode: 'install' | 'update'
+  approveBuilds?: boolean
 }
 
 export interface PluginMarketplaceApi {
   environment: () => Promise<MarketplaceEnvironment>
   list: () => Promise<MarketplacePlugin[]>
-  install: (spec: string) => Promise<MarketplaceMutationResult>
+  install: (spec: string, approveBuilds?: boolean) => Promise<MarketplaceMutationResult>
+  update: (spec: string, approveBuilds?: boolean) => Promise<MarketplaceMutationResult>
   remove: (name: string) => Promise<MarketplaceMutationResult>
   restart: () => Promise<void>
 }
@@ -42,7 +55,7 @@ export interface PluginMarketplaceApi {
 interface DesktopBridge {
   pluginMarketplaceEnvironment?: () => Promise<MarketplaceEnvironment>
   pluginMarketplaceList?: () => Promise<MarketplacePlugin[]>
-  pluginMarketplaceInstall?: (spec: string) => Promise<MarketplaceMutationResult>
+  pluginMarketplaceInstall?: (request: MarketplaceInstallRequest) => Promise<MarketplaceMutationResult>
   pluginMarketplaceRemove?: (name: string) => Promise<MarketplaceMutationResult>
   restart?: () => Promise<unknown>
 }
@@ -66,7 +79,14 @@ export function desktopMarketplaceApi(): PluginMarketplaceApi | undefined {
   return {
     environment: () => environment(),
     list: () => list(),
-    install: spec => install(spec),
+    install: (spec, approveBuilds = false) => install(approveBuilds
+      ? { spec, mode: 'install', approveBuilds: true }
+      : spec),
+    update: (spec, approveBuilds = false) => install({
+      spec,
+      mode: 'update',
+      ...(approveBuilds ? { approveBuilds: true } : {}),
+    }),
     remove: name => remove(name),
     restart: async () => { await restart() },
   }

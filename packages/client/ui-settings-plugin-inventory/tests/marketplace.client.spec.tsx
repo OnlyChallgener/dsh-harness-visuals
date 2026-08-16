@@ -31,6 +31,7 @@ beforeEach(() => {
     headers: { get: () => null },
     text: async () => JSON.stringify(catalogFixture),
   }))
+  vi.stubGlobal('confirm', vi.fn(() => true))
 })
 
 afterEach(() => {
@@ -51,10 +52,12 @@ function createApi() {
     .mockResolvedValue([{ name: '@fixture/plugin', version: '1.2.3' }])
   const install = vi.fn<PluginMarketplaceApi['install']>()
     .mockResolvedValue({ restartRequired: true })
+  const update = vi.fn<PluginMarketplaceApi['update']>()
+    .mockResolvedValue({ restartRequired: true })
   const remove = vi.fn<PluginMarketplaceApi['remove']>()
     .mockResolvedValue({ restartRequired: true })
   const restart = vi.fn<PluginMarketplaceApi['restart']>().mockResolvedValue(undefined)
-  return { environment, list, install, remove, restart } satisfies PluginMarketplaceApi
+  return { environment, list, install, update, remove, restart } satisfies PluginMarketplaceApi
 }
 
 describe('PluginMarketplaceSettingsTab', () => {
@@ -79,11 +82,34 @@ describe('PluginMarketplaceSettingsTab', () => {
     fireEvent.click(screen.getByRole('button', { name: en.marketplaceInstall }))
 
     await waitFor(() => {
-      expect(bridge.install).toHaveBeenCalledWith('@scope/new-plugin@1.0.0')
+      expect(bridge.install).toHaveBeenCalledWith('@scope/new-plugin@1.0.0', false)
     })
     expect(await screen.findByText(en.marketplaceRestartTitle)).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: en.marketplaceRestart }))
     expect(bridge.restart).toHaveBeenCalledOnce()
+  })
+
+  it('asks before approving exact blocked build dependencies and retries only once', async () => {
+    const bridge = createApi()
+    bridge.install
+      .mockResolvedValueOnce({
+        restartRequired: false,
+        approvalRequired: { kind: 'build-scripts', packages: ['ssh2', 'cpu-features'] },
+      })
+      .mockResolvedValueOnce({ restartRequired: true })
+    render(<PluginMarketplaceSettingsTab {...props(bridge)} />)
+    await screen.findByText('@fixture/plugin')
+
+    fireEvent.click(screen.getByRole('tab', { name: en.marketplaceRecommended }))
+    fireEvent.change(screen.getByLabelText(en.marketplaceInstallTitle), { target: { value: 'native-plugin' } })
+    fireEvent.click(screen.getByRole('button', { name: en.marketplaceInstall }))
+
+    await waitFor(() => { expect(bridge.install).toHaveBeenCalledTimes(2) })
+    expect(bridge.install).toHaveBeenNthCalledWith(1, 'native-plugin', false)
+    expect(bridge.install).toHaveBeenNthCalledWith(2, 'native-plugin', true)
+    expect(globalThis.confirm).toHaveBeenCalledOnce()
+    expect(String(vi.mocked(globalThis.confirm).mock.calls[0][0])).toContain('ssh2')
+    expect(await screen.findByText(en.marketplaceRestartTitle)).toBeTruthy()
   })
 
   it('installs a validated community-catalog item through the same backend', async () => {
@@ -97,8 +123,26 @@ describe('PluginMarketplaceSettingsTab', () => {
     expect(card).not.toBeNull()
     fireEvent.click(within(card!).getByRole('button', { name: en.marketplaceCatalogInstall }))
 
-    await waitFor(() => { expect(bridge.install).toHaveBeenCalledWith('community-plugin') })
+    await waitFor(() => { expect(bridge.install).toHaveBeenCalledWith('community-plugin', false) })
     expect(await screen.findByText(en.marketplaceRestartTitle)).toBeTruthy()
+  })
+
+  it('uses the dedicated update mode instead of treating updates as ordinary installs', async () => {
+    const bridge = createApi()
+    bridge.list.mockResolvedValue([{ 
+      name: '@fixture/plugin',
+      version: '1.2.3',
+      latestVersion: '1.3.0',
+      updateAvailable: true,
+      updateStatus: 'available',
+      updateSpec: '@fixture/plugin@1.3.0',
+    }])
+    render(<PluginMarketplaceSettingsTab {...props(bridge)} />)
+    await screen.findByText('@fixture/plugin')
+
+    fireEvent.click(screen.getByRole('button', { name: en.marketplaceUpdate }))
+    await waitFor(() => { expect(bridge.update).toHaveBeenCalledWith('@fixture/plugin@1.3.0', false) })
+    expect(bridge.install).not.toHaveBeenCalled()
   })
 
   it('removes an installed package and requests restart without hot reloading', async () => {
