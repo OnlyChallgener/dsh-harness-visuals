@@ -1,0 +1,253 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 12px;
+  padding: 12px;
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 92%, transparent);
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.headerText {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.headerText strong {
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.headerText span,
+.catalogMeta,
+.empty,
+.cardMeta,
+.description {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.catalogMeta {
+  white-space: nowrap;
+}
+
+.toolbar {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) 150px 132px;
+  gap: 8px;
+}
+
+.toolbar input,
+.toolbar select {
+  min-width: 0;
+  height: 34px;
+  box-sizing: border-box;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  padding: 0 9px;
+  outline: none;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 12px;
+}
+
+.toolbar input:focus-visible,
+.toolbar select:focus-visible {
+  border-color: var(--dsw-alias-brand-primary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--dsw-alias-brand-primary) 18%, transparent);
+}
+
+.statusRow,
+.errorRow,
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.errorRow {
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 12px;
+}
+
+.errorRow button,
+.pager button,
+.installButton,
+.installedButton {
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  min-height: 31px;
+  padding: 5px 10px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 12px;
+}
+
+.errorRow button,
+.pager button,
+.installButton {
+  cursor: pointer;
+}
+
+.installButton {
+  border-color: var(--dsw-alias-brand-primary);
+  background: var(--dsw-alias-brand-primary);
+  color: white;
+}
+
+.installedButton {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.errorRow button:hover:not(:disabled),
+.pager button:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.installButton:hover:not(:disabled) {
+  filter: brightness(0.96);
+}
+
+.errorRow button:disabled,
+.pager button:disabled,
+.installButton:disabled,
+.installedButton:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
+  padding: 11px;
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.cardTop,
+.cardFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.identity {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.identity strong {
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 19px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.identity span {
+  overflow: hidden;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 10px;
+  line-height: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.category {
+  flex: 0 0 auto;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 999px;
+  padding: 2px 7px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 10px;
+  line-height: 15px;
+}
+
+.description {
+  display: -webkit-box;
+  min-height: 34px;
+  margin: 0;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.cardMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 9px;
+}
+
+.repository {
+  color: var(--dsw-alias-brand-primary);
+  font-size: 11px;
+  text-decoration: none;
+}
+
+.repository:hover {
+  text-decoration: underline;
+}
+
+.pager {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+}
+
+.pagerControls {
+  display: flex;
+  gap: 6px;
+}
+
+.safetyNote {
+  margin: 0;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+  padding-top: 9px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 10px;
+  line-height: 16px;
+}
+
+@media (max-width: 760px) {
+  .toolbar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .header,
+  .statusRow {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .catalogMeta {
+    white-space: normal;
+  }
+}

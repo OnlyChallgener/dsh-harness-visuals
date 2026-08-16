@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   PluginMarketplaceSettingsTab,
   type PluginMarketplaceSettingsTabProps,
@@ -8,7 +8,35 @@ import {
 import type { PluginMarketplaceApi } from '../src/client/marketplace-bridge.ts'
 import { en, type PluginInventoryLocaleKey } from '../src/client/locales.ts'
 
-afterEach(cleanup)
+const catalogFixture = {
+  updated: '2026-08-16',
+  categories: { ui: { en: 'UI Enhancements', zh: 'UI 增强' } },
+  plugins: [{
+    name: 'community-plugin',
+    owner: 'fixture-owner',
+    url: 'https://github.com/fixture-owner/community-plugin',
+    category: 'ui',
+    description: { en: 'A community plugin fixture', zh: '社区插件测试项' },
+    npm: 'community-plugin',
+    stars: 42,
+    added: '2026-08-16',
+    install: 'dsh plugin --profile web add community-plugin',
+  }],
+}
+
+beforeEach(() => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+    ok: true,
+    status: 200,
+    headers: { get: () => null },
+    text: async () => JSON.stringify(catalogFixture),
+  }))
+})
+
+afterEach(() => {
+  cleanup()
+  vi.unstubAllGlobals()
+})
 
 const t = ((key: PluginInventoryLocaleKey): string => en[key]) as PluginMarketplaceSettingsTabProps['t']
 
@@ -56,6 +84,21 @@ describe('PluginMarketplaceSettingsTab', () => {
     expect(await screen.findByText(en.marketplaceRestartTitle)).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: en.marketplaceRestart }))
     expect(bridge.restart).toHaveBeenCalledOnce()
+  })
+
+  it('installs a validated community-catalog item through the same backend', async () => {
+    const bridge = createApi()
+    render(<PluginMarketplaceSettingsTab {...props(bridge)} />)
+    await screen.findByText('@fixture/plugin')
+
+    fireEvent.click(screen.getByRole('tab', { name: en.marketplaceRecommended }))
+    const pluginName = await screen.findByText('community-plugin')
+    const card = pluginName.closest('article')
+    expect(card).not.toBeNull()
+    fireEvent.click(within(card!).getByRole('button', { name: en.marketplaceCatalogInstall }))
+
+    await waitFor(() => { expect(bridge.install).toHaveBeenCalledWith('community-plugin') })
+    expect(await screen.findByText(en.marketplaceRestartTitle)).toBeTruthy()
   })
 
   it('removes an installed package and requests restart without hot reloading', async () => {

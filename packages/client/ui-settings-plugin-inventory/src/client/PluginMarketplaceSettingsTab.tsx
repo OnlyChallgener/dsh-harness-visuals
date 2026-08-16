@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { PluginInventoryLocaleKey } from './locales.ts'
+import { MarketplaceCatalogPanel } from './MarketplaceCatalogPanel.tsx'
 import type {
   MarketplaceEnvironment,
   MarketplacePlugin,
@@ -245,6 +246,19 @@ export function PluginMarketplaceSettingsTab({ api, t }: PluginMarketplaceSettin
     }
   }
 
+  const installCatalog = (value: string, id: string): void => {
+    if (api === undefined || environment?.pnpmAvailable !== true || operation !== undefined) return
+    setOperation(`catalog:${id}`)
+    setOperationFailed(false)
+    void api.install(value).then(
+      async (result) => {
+        setRestartRequired(current => current || result.restartRequired)
+        try { setPlugins(await api.list()) } catch { /* catalog install succeeded; keep the existing snapshot */ }
+      },
+      () => { setOperationFailed(true) },
+    ).finally(() => { setOperation(undefined) })
+  }
+
   const update = (plugin: MarketplacePlugin): void => {
     if (api === undefined || environment?.pnpmAvailable !== true || operation !== undefined || plugin.updateSpec === undefined) return
     setOperation(`update:${plugin.name}`)
@@ -376,6 +390,14 @@ export function PluginMarketplaceSettingsTab({ api, t }: PluginMarketplaceSettin
 
       {phase === 'ready' && view === 'recommended' ? (
         <div className={css.marketBody}>
+          <MarketplaceCatalogPanel
+            installed={plugins}
+            pnpmReady={pnpmReady}
+            disabled={operation !== undefined}
+            operation={operation}
+            onInstall={installCatalog}
+            t={t}
+          />
           <div className={css.sourceGrid}>
             {SOURCE_GUIDES.map(source => (
               <article className={css.sourceCard} key={source.id}>
