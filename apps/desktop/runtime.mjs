@@ -3,6 +3,7 @@ import { once } from 'node:events'
 import { existsSync } from 'node:fs'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
+import { createServer } from 'node:net'
 import { dirname, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { promisify } from 'node:util'
@@ -13,6 +14,7 @@ const NODE_VERSION_PATTERN = /^v(\d+)\.(\d+)\.(\d+)/u
 const execFileAsync = promisify(execFile)
 const DEFAULT_LAUNCHER_PATH = join(dirname(fileURLToPath(import.meta.url)), 'runtime-launcher.cjs')
 const WINDOWS_OCR_TIMEOUT_MS = 30_000
+const DEFAULT_HARNESS_PORTS = Array.from({ length: 10 }, (_value, index) => 3080 + index)
 const SYSTEM_ENV_KEYS = new Set([
   'ALL_PROXY',
   'APPDATA',
@@ -102,6 +104,38 @@ export async function checkNodeRuntime(nodePath) {
 }
 
 /**
+ * Probes whether the desktop can bind one loopback port without exposing it.
+ * @param {number} port - Candidate TCP port.
+ * @returns {Promise<boolean>} Whether the bind succeeded.
+ */
+async function canBindHarnessPort(port) {
+  return await new Promise(resolve => {
+    const server = createServer()
+    server.unref()
+    server.once('error', () => { resolve(false) })
+    server.listen({ host: '127.0.0.1', port, exclusive: true }, () => {
+      server.close(() => { resolve(true) })
+    })
+  })
+}
+
+/**
+ * Chooses a stable local Harness port when possible, falling back to an
+ * OS-assigned ephemeral port only after the preferred range is occupied.
+ * The injected probe keeps the policy deterministic in tests.
+ * @param {{ candidates?: readonly number[], probe?: (port: number) => Promise<boolean> }} [options] - Selection policy overrides.
+ * @returns {Promise<number>} A preferred port, or 0 for OS assignment.
+ */
+export async function selectHarnessPort(options = {}) {
+  const candidates = options.candidates ?? DEFAULT_HARNESS_PORTS
+  const probe = options.probe ?? canBindHarnessPort
+  for (const port of candidates) {
+    if (await probe(port)) return port
+  }
+  return 0
+}
+
+/**
  * Builds the minimum inherited environment needed by Harness on the desktop.
  * @param {NodeJS.ProcessEnv} source - The desktop process environment.
  * @param {string} dshHome - Harness's private data directory.
@@ -187,12 +221,12 @@ export async function runWindowsOcr({ data, mediaType, scriptPath, tempDirectory
 
 /**
  * Starts a local Harness server using the selected Node.js runtime.
- * @param {{ nodePath: string, dshHome: string, runtimeRoot: string, launcherPath?: string, workingDirectory?: string, onOutput: (output: string) => void, onReady: (url: string) => void, onExit: (code: number | null, signal: NodeJS.Signals | null) => void, onError: (error: Error) => void }} options - Runtime settings and process callbacks.
+ * @param {{ nodePath: string, dshHome: string, runtimeRoot: string, launcherPath?: string, workingDirectory?: string, port?: number, onOutput: (output: string) => void, onReady: (url: string) => void, onExit: (code: number | null, signal: NodeJS.Signals | null) => void, onError: (error: Error) => void }} options - Runtime settings and process callbacks.
  * @returns {import('node:child_process').ChildProcessWithoutNullStreams} The running dsh process.
  */
-export function startHarness({ nodePath, dshHome, runtimeRoot, launcherPath = DEFAULT_LAUNCHER_PATH, workingDirectory, onOutput, onReady, onExit, onError }) {
+export function startHarness({ nodePath, dshHome, runtimeRoot, launcherPath = DEFAULT_LAUNCHER_PATH, workingDirectory, port = 0, onOutput, onReady, onExit, onError }) {
   const binPath = dshBinPath(runtimeRoot)
-  const child = spawn(nodePath, [launcherPath, binPath, 'web', '--host', '127.0.0.1', '--port', '0'], {
+  const child = spawn(nodePath, [launcherPath, binPath, 'web', '--host', '127.0.0.1', '--port', String(port)], {
     cwd: workingDirectory ?? dirname(binPath),
     env: harnessEnvironment(process.env, dshHome),
     stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
