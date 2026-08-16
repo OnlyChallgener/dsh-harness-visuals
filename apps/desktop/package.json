@@ -40,7 +40,8 @@
         "to": "runtime",
         "filter": [
           "package.json",
-          "package-lock.json"
+          "package-lock.json",
+          "bin/**/*"
         ]
       },
       {
