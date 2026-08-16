@@ -120,6 +120,13 @@
   display: none;
 }
 
+.wallpaperHint {
+  max-width: 620px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+}
+
 .wallpaperError {
   font-size: 12px;
   line-height: 18px;

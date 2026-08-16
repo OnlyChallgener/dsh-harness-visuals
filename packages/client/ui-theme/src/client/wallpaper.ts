@@ -11,6 +11,7 @@ const DATABASE_VERSION = 1
 const STORE_NAME = 'appearance'
 const WALLPAPER_KEY = 'wallpaper'
 const WALLPAPER_PROPERTY = '--dsh-wallpaper-image'
+const WALLPAPER_ATTRIBUTE = 'data-dsh-local-wallpaper'
 const MAX_WALLPAPER_BYTES = 20 * 1024 * 1024
 const SUPPORTED_MEDIA_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/avif'])
 
@@ -99,6 +100,7 @@ function clearPresentation(): void {
   if (activeUrl !== undefined) URL.revokeObjectURL(activeUrl)
   activeUrl = undefined
   document.documentElement.style.removeProperty(WALLPAPER_PROPERTY)
+  document.documentElement.removeAttribute(WALLPAPER_ATTRIBUTE)
 }
 
 function present(record: WallpaperRecord): void {
@@ -106,12 +108,18 @@ function present(record: WallpaperRecord): void {
   clearPresentation()
   activeUrl = URL.createObjectURL(record.blob)
   document.documentElement.style.setProperty(WALLPAPER_PROPERTY, `url("${activeUrl}")`)
+  // AppFrame uses this flag to make only the full-canvas surfaces translucent.
+  // The selector is !important on exactly two background tokens, so this local
+  // wallpaper wins visually without reading, deleting, or rewriting any
+  // third-party skin state. Clearing the flag reveals the prior theme again.
+  document.documentElement.setAttribute(WALLPAPER_ATTRIBUTE, 'true')
 }
 
 async function restoreWallpaper(): Promise<void> {
   try {
     const record = await readRecord()
     if (record === undefined) {
+      if (typeof document !== 'undefined') clearPresentation()
       publish({ loaded: true, busy: false })
       return
     }

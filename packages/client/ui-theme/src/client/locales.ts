@@ -11,6 +11,7 @@ export const zh = {
   'appearance.wallpaper.choose': '选择壁纸',
   'appearance.wallpaper.replace': '更换壁纸',
   'appearance.wallpaper.clear': '恢复默认',
+  'appearance.wallpaper.priority': '本地壁纸启用时优先显示；恢复默认后，第三方壁纸插件可重新接管背景。',
 } satisfies Record<string, string>
 
 /** The settings.theme namespace key union. */
@@ -27,4 +28,5 @@ export const en = {
   'appearance.wallpaper.choose': 'Choose wallpaper',
   'appearance.wallpaper.replace': 'Replace wallpaper',
   'appearance.wallpaper.clear': 'Reset',
+  'appearance.wallpaper.priority': 'Local wallpaper takes visual priority. Reset it to let a third-party wallpaper plugin take over again.',
 } satisfies Record<ThemeKey, string>

@@ -104,6 +104,9 @@ export function AppearanceRow({ t, setTheme, useStore }: AppearanceRowComponentP
           />
         </div>
       </div>
+      {wallpaper.name !== undefined && (
+        <div className={css.wallpaperHint}>{t('appearance.wallpaper.priority')}</div>
+      )}
       {wallpaper.error !== undefined && <div className={css.wallpaperError} role="alert">{wallpaper.error}</div>}
     </div>
   )
