@@ -438,12 +438,11 @@ export class AgentPresets extends Service {
    * Re-link one agent to a different preset's standing composition.
    *
    * Live switching is an inter-turn operation. The target standing mount may
-   * be prepared while a turn is running, but the agent's parent link must not
-   * move until the current driver is idle; otherwise one turn could observe
-   * two different tool/prompt compositions. A real Agent's maintenance claim
-   * closes the tiny idle-to-rebind race and parks any newly arriving work until
-   * the synchronous link change completes. Lightweight test doubles without
-   * that optional runtime method retain the existing direct-rebind behavior.
+   * be prepared while a turn is running, but the agent's parent link does not
+   * move until the current driver reports idle; otherwise one turn could see
+   * two different tool/prompt compositions. The final link change is
+   * synchronous, so the current turn completes on the old preset and the next
+   * turn starts from the new one.
    *
    * The swap is a parent re-link, not an unmount: standing mounts are shared
    * and permanent, so the old composition stays for its other agents and the
@@ -475,11 +474,7 @@ export class AgentPresets extends Service {
     }
     const agent = agentCtx.agent
     if (agent?.status === 'running') await agent.whenIdle()
-    if (agent !== undefined && typeof agent.runMaintenance === 'function') {
-      await agent.runMaintenance(async () => { rebind() })
-    } else {
-      rebind()
-    }
+    rebind()
     return preset
   }
 
