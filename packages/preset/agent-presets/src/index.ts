@@ -437,10 +437,13 @@ export class AgentPresets extends Service {
   /**
    * Re-link one agent to a different preset's standing composition.
    *
-   * Only valid while the agent has produced nothing: swapping tools mid
-   * conversation would leave logged tool calls the new composition cannot
-   * make. The CALLER owns that check — this method does not read session
-   * history.
+   * Live switching is an inter-turn operation. The target standing mount may
+   * be prepared while a turn is running, but the agent's parent link must not
+   * move until the current driver is idle; otherwise one turn could observe
+   * two different tool/prompt compositions. A real Agent's maintenance claim
+   * closes the tiny idle-to-rebind race and parks any newly arriving work until
+   * the synchronous link change completes. Lightweight test doubles without
+   * that optional runtime method retain the existing direct-rebind behavior.
    *
    * The swap is a parent re-link, not an unmount: standing mounts are shared
    * and permanent, so the old composition stays for its other agents and the
@@ -462,11 +465,20 @@ export class AgentPresets extends Service {
     }
     const preset = await this.resolveMountable(id)
     const standing = await this.ensureStanding(preset)
-    const binding = this.bindings.get(agentKey)
-    if (binding === undefined) {
-      this.bindings.set(agentKey, bindScopeParent(agentKey, standing.key))
+    const rebind = (): void => {
+      const binding = this.bindings.get(agentKey)
+      if (binding === undefined) {
+        this.bindings.set(agentKey, bindScopeParent(agentKey, standing.key))
+      } else {
+        binding.rebind(standing.key)
+      }
+    }
+    const agent = agentCtx.agent
+    if (agent?.status === 'running') await agent.whenIdle()
+    if (agent !== undefined && typeof agent.runMaintenance === 'function') {
+      await agent.runMaintenance(async () => { rebind() })
     } else {
-      binding.rebind(standing.key)
+      rebind()
     }
     return preset
   }
