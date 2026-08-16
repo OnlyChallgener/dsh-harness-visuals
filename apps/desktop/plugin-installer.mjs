@@ -1,12 +1,9 @@
-import { execFile, spawn } from 'node:child_process'
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { spawn } from 'node:child_process'
+import { access, readFile, writeFile } from 'node:fs/promises'
 import { delimiter, dirname, join } from 'node:path'
-import { promisify } from 'node:util'
 import {
-  classifyMarketplacePnpmFailure,
   comparePluginVersions,
   exactRegistryPluginVersion,
-  managedPnpmShimContent,
   parseBlockedBuildPackages,
   pluginPackageName,
   pluginSpec,
@@ -14,7 +11,6 @@ import {
 } from './plugin-marketplace.mjs'
 import { dshBinPath, harnessEnvironment } from './runtime.mjs'
 
-const execFileAsync = promisify(execFile)
 const INSTALL_TIMEOUT_MS = 15 * 60 * 1000
 const OUTPUT_LIMIT_BYTES = 4 * 1024 * 1024
 const PROGRESS_LINE_LIMIT = 260
@@ -32,37 +28,42 @@ function webProfileWorkspacePath(dshHome) {
   return join(webProfileDir(dshHome), 'pnpm-workspace.yaml')
 }
 
-async function commandAvailable(command) {
-  const locator = process.platform === 'win32' ? 'where.exe' : 'which'
+function packagedPnpmEntry(runtimeRoot) {
+  return join(runtimeRoot, 'node_modules', 'pnpm', 'bin', 'pnpm.cjs')
+}
+
+function packagedPnpmBin(runtimeRoot) {
+  return join(runtimeRoot, 'bin')
+}
+
+function packagedPnpmLauncher(runtimeRoot) {
+  return join(packagedPnpmBin(runtimeRoot), process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm')
+}
+
+async function officialPluginEnvironment(options) {
+  const pnpmEntry = packagedPnpmEntry(options.runtimeRoot)
+  const pnpmLauncher = packagedPnpmLauncher(options.runtimeRoot)
   try {
-    await execFileAsync(locator, [command], { timeout: 3_000, windowsHide: true })
-    return true
+    await access(pnpmEntry)
+    await access(pnpmLauncher)
   } catch {
-    return false
+    throw new Error('The Desktop packaged pnpm runtime is missing. Rebuild or reinstall DeepSeek Harness Desktop.')
   }
-}
 
-async function ensurePackageManager(dshHome) {
-  if (await commandAvailable('pnpm')) return { pathPrefix: undefined }
-  if (!await commandAvailable('npm')) throw new Error('pnpm is unavailable and npm cannot provide the managed pnpm fallback.')
-  const binDir = join(dshHome, 'desktop-tools', 'bin')
-  const shimPath = join(binDir, process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm')
-  await mkdir(binDir, { recursive: true })
-  await writeFile(shimPath, managedPnpmShimContent(), { encoding: 'utf8', mode: 0o755 })
-  if (process.platform !== 'win32') await chmod(shimPath, 0o755)
-  return { pathPrefix: binDir }
-}
-
-function pluginEnvironment(dshHome, pathPrefix) {
-  const base = harnessEnvironment(process.env, dshHome)
+  const base = harnessEnvironment(process.env, options.dshHome)
+  let inheritedPath = ''
+  for (const key of Object.keys(base)) {
+    if (key.toUpperCase() !== 'PATH') continue
+    inheritedPath = base[key] ?? ''
+    delete base[key]
+  }
   return {
     ...base,
-    // pnpm can otherwise wait forever for an interactive reinstall/approval
-    // prompt because Electron's background process has no TTY.
+    PATH: inheritedPath.length === 0
+      ? packagedPnpmBin(options.runtimeRoot)
+      : `${packagedPnpmBin(options.runtimeRoot)}${delimiter}${inheritedPath}`,
+    DSH_DESKTOP_NODE: options.nodePath,
     CI: 'true',
-    ...(pathPrefix === undefined
-      ? {}
-      : { PATH: `${pathPrefix}${delimiter}${base.PATH ?? ''}` }),
   }
 }
 
@@ -74,7 +75,7 @@ function quoteYamlKey(key) {
 }
 
 /**
- * Repair pnpm 11 placeholders/duplicates and optionally approve exact build
+ * Repair pnpm placeholders/duplicates and optionally approve exact build
  * packages. Only the allowBuilds mapping is rewritten; every other workspace
  * setting is preserved verbatim.
  */
@@ -97,8 +98,7 @@ export function rewriteAllowBuildsDocument(source, approvedPackages = []) {
       try {
         values.set(pluginPackageName(key), entry[2].toLowerCase())
       } catch {
-        // Ignore malformed or pnpm placeholder rows instead of preserving a
-        // mapping that can make the whole workspace YAML unparsable.
+        // Ignore malformed placeholder rows left by older pnpm/Desktop runs.
       }
     }
   }
@@ -111,11 +111,13 @@ export function rewriteAllowBuildsDocument(source, approvedPackages = []) {
   const replacement = `allowBuilds:${eol}${block}${block.length === 0 ? '' : eol}`
 
   if (match !== null) return yaml.replace(blockRe, replacement)
+  if (approved.size === 0) return yaml
   const prefix = yaml.length === 0 || /\r?\n$/u.test(yaml) ? yaml : `${yaml}${eol}`
   return `${prefix}${replacement}`
 }
 
 async function updateAllowBuilds(dshHome, approvedPackages = []) {
+  if (approvedPackages.length === 0) return
   const file = webProfileWorkspacePath(dshHome)
   let before = ''
   try { before = await readFile(file, 'utf8') } catch { /* created below */ }
@@ -138,25 +140,6 @@ async function readProfileState(dshHome) {
   }
 }
 
-async function restoreProfileState(dshHome, state) {
-  const file = webProfileManifestPath(dshHome)
-  let manifest
-  try { manifest = JSON.parse(await readFile(file, 'utf8')) } catch { return [] }
-  if (manifest === null || typeof manifest !== 'object' || Array.isArray(manifest)) return []
-  const current = manifest.dependencies !== null && typeof manifest.dependencies === 'object' && !Array.isArray(manifest.dependencies)
-    ? manifest.dependencies
-    : {}
-  const touched = new Set()
-  for (const [name, spec] of Object.entries(current)) if (state.dependencies[name] !== spec) touched.add(name)
-  for (const [name, spec] of Object.entries(state.dependencies)) if (current[name] !== spec) touched.add(name)
-  manifest.dependencies = { ...state.dependencies }
-  manifest.dsh ??= {}
-  manifest.dsh.profile ??= {}
-  manifest.dsh.profile.bundles = [...state.bundles]
-  await writeFile(file, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
-  return [...touched].sort()
-}
-
 function registryPackageName(spec) {
   if (spec.startsWith('github:')) return undefined
   if (spec.startsWith('@')) {
@@ -171,7 +154,7 @@ function registryPackageName(spec) {
 async function readInstalledManifest(dshHome, name) {
   const file = join(webProfileDir(dshHome), 'node_modules', ...name.split('/'), 'package.json')
   const manifest = JSON.parse(await readFile(file, 'utf8'))
-  return { file, directory: dirname(file), manifest }
+  return { directory: dirname(file), manifest }
 }
 
 function rootExportCandidates(manifest) {
@@ -191,14 +174,14 @@ function rootExportCandidates(manifest) {
 
 async function pathExists(path) {
   try {
-    await readFile(path)
+    await access(path)
     return true
   } catch {
     return false
   }
 }
 
-/** Validate that a successful pnpm run actually left a usable DSH package. */
+/** Validate that a successful official DSH mutation left a usable package. */
 export async function validateInstalledPlugin(dshHome, name) {
   const safeName = pluginPackageName(name)
   let installed
@@ -227,7 +210,7 @@ export async function validateInstalledPlugin(dshHome, name) {
     }
     const profile = await readProfileState(dshHome)
     if (!profile.bundles.includes(safeName)) {
-      throw new Error(`Installed plugin ${safeName} was not registered in dsh.profile.bundles.`)
+      throw new Error(`Installed plugin ${safeName} was not registered in dsh.profile.bundles by dsh plugin.`)
     }
     return { name: safeName, kind: 'bundle' }
   }
@@ -292,12 +275,14 @@ function createLineFeeder(onProgress) {
   }
 }
 
-/** Run the official dsh plugin forwarder as a cancellable, streaming Host task. */
+/**
+ * Run the official `dsh plugin --profile web ...` command. Desktop only owns
+ * process lifetime and the pinned pnpm runtime; profile mutation/reconcile is
+ * intentionally left to upstream DSH.
+ */
 export async function runOfficialPluginCommand(options, args, { signal, onProgress } = {}) {
-  const packageManager = await ensurePackageManager(options.dshHome)
-  await updateAllowBuilds(options.dshHome)
   const binPath = dshBinPath(options.runtimeRoot)
-  const env = pluginEnvironment(options.dshHome, packageManager.pathPrefix)
+  const env = await officialPluginEnvironment(options)
   if (signal?.aborted) throw abortError()
 
   return await new Promise((resolve, reject) => {
@@ -329,9 +314,7 @@ export async function runOfficialPluginCommand(options, args, { signal, onProgre
       signal?.removeEventListener?.('abort', onAbort)
       callback()
     }
-    const onAbort = () => {
-      killProcessTree(child)
-    }
+    const onAbort = () => { killProcessTree(child) }
     signal?.addEventListener?.('abort', onAbort, { once: true })
     const timer = setTimeout(() => {
       timedOut = true
@@ -357,51 +340,27 @@ export async function runOfficialPluginCommand(options, args, { signal, onProgre
   })
 }
 
-function hoistFailure(detail) {
-  return /ERR_PNPM_PUBLIC_HOIST_PATTERN_DIFF|ERR_PNPM_VIRTUAL_STORE_DIR_MAX_LENGTH_DIFF|modules directory .* different pnpm|unexpected store location/iu.test(detail)
-}
-
-async function runWithRecovery(options, args, context) {
-  const run = commandArgs => runOfficialPluginCommand(options, commandArgs, context)
-  try {
-    return await run(args)
-  } catch (firstError) {
-    if (context.signal?.aborted) throw firstError
-    const detail = errorDetail(firstError)
-    if (hoistFailure(detail)) {
-      context.onProgress?.({ stage: 'repairing', message: 'Rebuilding the Web profile package store once, then retrying.' })
-      await run(['install', '--no-frozen-lockfile'])
-      return await run(args)
-    }
-    const failure = classifyMarketplacePnpmFailure(detail)
-    if (failure.kind === 'release-age' && args[0] === 'add') {
-      context.onProgress?.({ stage: 'retrying', message: 'Retrying this explicit install/update with a one-shot release-age override.' })
-      return await run([args[0], '--config.minimumReleaseAge=0', ...args.slice(1)])
-    }
-    if (failure.kind === 'transient-network') {
-      context.onProgress?.({ stage: 'retrying', message: 'Network interruption detected; retrying once.' })
-      return await run(args)
-    }
-    throw firstError
-  }
-}
-
 async function verifySuccessfulMutation(options, request, before) {
   const after = await readProfileState(options.dshHome)
   const expected = exactRegistryPluginVersion(request.spec)
   let candidates = changedDependencyNames(before, after).filter(name => after.dependencies[name] !== undefined)
   const registryName = registryPackageName(request.spec)
+
   if (expected !== undefined) {
     const installedVersion = await readInstalledPluginVersion(options.dshHome, expected.name)
     if (installedVersion === undefined || comparePluginVersions(installedVersion, expected.version) !== 0) {
       throw new Error(`Requested ${expected.name}@${expected.version}, but the installed version is ${installedVersion ?? 'missing'}.`)
     }
+    if (after.dependencies[expected.name] === undefined) {
+      throw new Error(`Requested ${expected.name}@${expected.version}, but it is not a direct Web profile dependency.`)
+    }
     candidates = [expected.name]
   } else if (registryName !== undefined && after.dependencies[registryName] !== undefined) {
     candidates = [registryName]
   }
+
   if (candidates.length === 0) {
-    throw new Error('pnpm exited successfully but no installed plugin dependency could be verified.')
+    throw new Error('dsh plugin exited successfully but no installed plugin dependency could be verified.')
   }
   const surfaces = []
   for (const name of candidates) surfaces.push(await validateInstalledPlugin(options.dshHome, name))
@@ -412,7 +371,7 @@ async function verifySuccessfulMutation(options, request, before) {
   }
 }
 
-/** Execute one real install/update transaction. */
+/** Execute one real install/update transaction through upstream DSH. */
 export async function executePluginMutation(options, request, {
   approvedPackages = [],
   signal,
@@ -423,34 +382,34 @@ export async function executePluginMutation(options, request, {
   if (mode === 'update' && exactRegistryPluginVersion(spec) === undefined) {
     throw new Error('Marketplace updates require an exact npm package version.')
   }
+
   const before = await readProfileState(options.dshHome)
   if (approvedPackages.length > 0) await updateAllowBuilds(options.dshHome, approvedPackages)
   onProgress?.({ stage: 'starting', message: mode === 'update' ? `Updating ${spec}` : `Installing ${spec}` })
+
   try {
-    await runWithRecovery(options, ['add', spec], { signal, onProgress })
-    onProgress?.({ stage: 'verifying', message: 'Verifying the installed DSH package and profile registration.' })
-    const verified = await verifySuccessfulMutation(options, { spec, mode }, before)
-    return {
-      installed: spec,
-      installedNames: verified.names,
-      surfaces: verified.surfaces,
-      ...(verified.installedVersion === undefined ? {} : { installedVersion: verified.installedVersion }),
-      restartRequired: true,
-    }
+    await runOfficialPluginCommand(options, ['add', spec], { signal, onProgress })
   } catch (error) {
+    if (error?.name === 'AbortError') throw error
     const detail = errorDetail(error)
     const blocked = parseBlockedBuildPackages(detail)
-    const failure = classifyMarketplacePnpmFailure(detail)
-    const rolledBack = await restoreProfileState(options.dshHome, before).catch(() => [])
-    if (failure.kind === 'build-approval' && blocked.length > 0) {
+    if (blocked.length > 0 && approvedPackages.length === 0) {
       return {
         restartRequired: false,
         approvalRequired: { kind: 'build-scripts', packages: blocked },
-        rolledBack,
       }
     }
-    if (error?.name === 'AbortError') throw error
-    throw new Error(`${detail}${rolledBack.length === 0 ? '' : `\nDesktop restored the previous Web profile state: ${rolledBack.join(', ')}`}`)
+    throw new Error(detail)
+  }
+
+  onProgress?.({ stage: 'verifying', message: 'Verifying the installed DSH package and profile registration.' })
+  const verified = await verifySuccessfulMutation(options, { spec, mode }, before)
+  return {
+    installed: spec,
+    installedNames: verified.names,
+    surfaces: verified.surfaces,
+    ...(verified.installedVersion === undefined ? {} : { installedVersion: verified.installedVersion }),
+    restartRequired: true,
   }
 }
 
