@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
-import { dirname } from 'node:path'
+import { readFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { checkNodeRuntime, dshBinPath, harnessEnvironment } from './runtime.mjs'
 
@@ -7,21 +8,16 @@ const execFileAsync = promisify(execFile)
 const PLUGIN_COMMAND_TIMEOUT_MS = 5 * 60 * 1000
 const PLUGIN_OUTPUT_LIMIT_BYTES = 4 * 1024 * 1024
 const PLUGIN_SPEC_MAX_LENGTH = 512
+const MARKETPLACE_METADATA_TIMEOUT_MS = 4_000
+const MARKETPLACE_METADATA_CONCURRENCY = 4
 const PACKAGE_NAME_PATTERN = /^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)$/iu
 const REGISTRY_SPEC_PATTERN = /^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)(?:@[a-z0-9][a-z0-9._-]*)?$/iu
 const GITHUB_SPEC_PATTERN = /^github:[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*(?:#[a-z0-9][a-z0-9._\/-]*)?$/iu
+const SEMVER_PATTERN = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/u
 
 let mutationTail = Promise.resolve()
 
-/**
- * Validates one package spec before it reaches the official `dsh plugin`
- * forwarder. Marketplace installs intentionally start with registry packages
- * (optionally pinned to an exact version/tag) and GitHub shorthand. Arbitrary
- * shell/path/tarball specs stay outside this UI boundary because the official
- * Windows plugin forwarder must invoke pnpm through its command shim.
- * @param {unknown} value - Candidate package spec.
- * @returns {string} The trimmed safe spec.
- */
+/** Validate one package spec before it reaches the official `dsh plugin` forwarder. */
 export function pluginSpec(value) {
   if (typeof value !== 'string') throw new TypeError('Plugin spec must be a string.')
   const spec = value.trim()
@@ -34,13 +30,7 @@ export function pluginSpec(value) {
   return spec
 }
 
-/**
- * Validates the installed package name accepted by remove/inspect operations.
- * Version and source suffixes are intentionally rejected here: removal acts on
- * the dependency key recorded by pnpm, not on an install spec.
- * @param {unknown} value - Candidate package name.
- * @returns {string} The safe package name.
- */
+/** Validate the installed package name accepted by remove/inspect operations. */
 export function pluginPackageName(value) {
   if (typeof value !== 'string') throw new TypeError('Plugin package name must be a string.')
   const name = value.trim()
@@ -50,12 +40,7 @@ export function pluginPackageName(value) {
   return name
 }
 
-/**
- * Parses `pnpm list --depth 0 --json` into the stable subset the future
- * marketplace UI needs. Unknown pnpm fields stay private to this backend.
- * @param {string} output - pnpm JSON output.
- * @returns {{ name: string, version: string, path?: string }[]} Installed dependencies.
- */
+/** Parse `pnpm list --depth 0 --json` into a bounded internal dependency record. */
 export function parsePluginList(output) {
   const parsed = JSON.parse(output)
   const root = Array.isArray(parsed) ? parsed[0] : parsed
@@ -68,9 +53,194 @@ export function parsePluginList(output) {
       const record = value
       const version = typeof record.version === 'string' ? record.version : ''
       const path = typeof record.path === 'string' ? record.path : undefined
-      return [{ name, version, ...(path === undefined ? {} : { path }) }]
+      const sourceSpec = typeof record.from === 'string'
+        ? record.from
+        : typeof record.resolved === 'string'
+          ? record.resolved
+          : undefined
+      return [{
+        name,
+        version,
+        ...(path === undefined ? {} : { path }),
+        ...(sourceSpec === undefined ? {} : { sourceSpec }),
+      }]
     })
     .sort((left, right) => left.name.localeCompare(right.name))
+}
+
+/** Classify the dependency route without confusing a package's GitHub repository with its install source. */
+export function pluginSourceKind(sourceSpec) {
+  if (typeof sourceSpec !== 'string' || sourceSpec.length === 0) return 'npm'
+  const source = sourceSpec.trim()
+  if (/^https?:\/\/registry\.npmjs\.org\//iu.test(source)) return 'npm'
+  if (/^(?:github:|git\+https?:\/\/github\.com\/|https?:\/\/github\.com\/)/iu.test(source)
+    || /^(?!@)[a-z0-9_.-]+\/[a-z0-9_.-]+(?:#.*)?$/iu.test(source)) return 'github'
+  if (/^(?:file:|link:|workspace:|https?:\/\/|git\+|git:|ssh:)/iu.test(source)
+    || /^[a-z]:[\\/]/iu.test(source)
+    || source.startsWith('/') || source.startsWith('.')) return 'unknown'
+  return 'npm'
+}
+
+/** Compare ordinary semantic versions. Undefined means at least one side is not safely comparable. */
+export function comparePluginVersions(left, right) {
+  const parse = value => {
+    if (typeof value !== 'string') return undefined
+    const match = SEMVER_PATTERN.exec(value.trim())
+    if (match === null) return undefined
+    return {
+      core: [Number(match[1]), Number(match[2]), Number(match[3])],
+      pre: match[4]?.split('.'),
+    }
+  }
+  const a = parse(left)
+  const b = parse(right)
+  if (a === undefined || b === undefined) return undefined
+  for (let index = 0; index < 3; index += 1) {
+    if (a.core[index] !== b.core[index]) return a.core[index] > b.core[index] ? 1 : -1
+  }
+  if (a.pre === undefined && b.pre === undefined) return 0
+  if (a.pre === undefined) return 1
+  if (b.pre === undefined) return -1
+  const length = Math.max(a.pre.length, b.pre.length)
+  for (let index = 0; index < length; index += 1) {
+    const av = a.pre[index]
+    const bv = b.pre[index]
+    if (av === undefined) return -1
+    if (bv === undefined) return 1
+    if (av === bv) continue
+    const an = /^\d+$/u.test(av) ? Number(av) : undefined
+    const bn = /^\d+$/u.test(bv) ? Number(bv) : undefined
+    if (an !== undefined && bn !== undefined) return an > bn ? 1 : -1
+    if (an !== undefined) return -1
+    if (bn !== undefined) return 1
+    return av > bv ? 1 : -1
+  }
+  return 0
+}
+
+function httpUrl(value) {
+  return typeof value === 'string' && /^https?:\/\//iu.test(value) ? value : undefined
+}
+
+/** Normalize common npm repository shapes into an ordinary HTTPS URL. */
+function repositoryUrl(value) {
+  const raw = typeof value === 'string'
+    ? value
+    : value !== null && typeof value === 'object' && typeof value.url === 'string'
+      ? value.url
+      : undefined
+  if (raw === undefined) return undefined
+  const normalized = raw
+    .replace(/^git\+https:/iu, 'https:')
+    .replace(/^git:\/\/github\.com\//iu, 'https://github.com/')
+    .replace(/^git@github\.com:/iu, 'https://github.com/')
+    .replace(/\.git$/iu, '')
+  return /^https?:\/\//iu.test(normalized) ? normalized : undefined
+}
+
+/** Read only public package metadata from the installed package root. */
+async function readInstalledManifest(path) {
+  if (typeof path !== 'string' || path.length === 0) return {}
+  try {
+    const parsed = JSON.parse(await readFile(join(path, 'package.json'), 'utf8'))
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    return {
+      description: typeof parsed.description === 'string' ? parsed.description.slice(0, 800) : undefined,
+      homepage: httpUrl(parsed.homepage),
+      repository: repositoryUrl(parsed.repository),
+      license: typeof parsed.license === 'string' ? parsed.license.slice(0, 80) : undefined,
+    }
+  } catch {
+    return {}
+  }
+}
+
+/** Fetch one small public metadata document with a strict timeout and no credentials. */
+async function fetchMarketplaceJson(url, fetchImpl) {
+  if (typeof fetchImpl !== 'function') return undefined
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), MARKETPLACE_METADATA_TIMEOUT_MS)
+  try {
+    const response = await fetchImpl(url, {
+      headers: { accept: 'application/json' },
+      signal: controller.signal,
+    })
+    if (!response.ok) return undefined
+    const value = await response.json()
+    return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : undefined
+  } catch {
+    return undefined
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+/** Query only the npm public package document needed for details and latest-version checks. */
+async function npmLatestMetadata(name, fetchImpl) {
+  const safeName = pluginPackageName(name)
+  return fetchMarketplaceJson(`https://registry.npmjs.org/${encodeURIComponent(safeName)}/latest`, fetchImpl)
+}
+
+/** Merge installed metadata with bounded public registry evidence. */
+async function enrichInstalledPlugin(plugin, fetchImpl) {
+  const local = await readInstalledManifest(plugin.path)
+  const source = pluginSourceKind(plugin.sourceSpec)
+  let registry
+  if (source === 'npm') registry = await npmLatestMetadata(plugin.name, fetchImpl)
+
+  const latestVersion = typeof registry?.version === 'string' ? registry.version : undefined
+  const comparison = latestVersion === undefined ? undefined : comparePluginVersions(latestVersion, plugin.version)
+  const updateAvailable = comparison !== undefined && comparison > 0
+  const updateStatus = source !== 'npm'
+    ? 'unsupported'
+    : registry === undefined
+      ? 'unavailable'
+      : comparison === undefined
+        ? latestVersion === plugin.version ? 'current' : 'unsupported'
+        : updateAvailable ? 'available' : 'current'
+  const repository = local.repository ?? repositoryUrl(registry?.repository)
+  const homepage = local.homepage ?? httpUrl(registry?.homepage)
+  const provenance = plugin.name.startsWith('@deepseek-ai/')
+    ? 'deepseek-scope'
+    : registry !== undefined
+      ? 'registry'
+      : repository !== undefined
+        ? 'declared'
+        : 'unknown'
+
+  return {
+    name: plugin.name,
+    version: plugin.version,
+    source,
+    provenance,
+    updateAvailable,
+    updateStatus,
+    ...(typeof (local.description ?? registry?.description) === 'string'
+      ? { description: (local.description ?? registry.description).slice(0, 800) }
+      : {}),
+    ...(homepage === undefined ? {} : { homepage }),
+    ...(repository === undefined ? {} : { repository }),
+    ...(typeof (local.license ?? registry?.license) === 'string'
+      ? { license: String(local.license ?? registry.license).slice(0, 80) }
+      : {}),
+    ...(latestVersion === undefined ? {} : { latestVersion }),
+    ...(updateAvailable && latestVersion !== undefined ? { updateSpec: `${plugin.name}@${latestVersion}` } : {}),
+  }
+}
+
+/** Run a small async mapper with a fixed concurrency ceiling. */
+async function mapWithConcurrency(values, limit, mapper) {
+  const result = new Array(values.length)
+  let cursor = 0
+  async function worker() {
+    while (cursor < values.length) {
+      const index = cursor
+      cursor += 1
+      result[index] = await mapper(values[index])
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, values.length) }, () => worker()))
+  return result
 }
 
 /** Run one official profile-plugin command without a shell or string interpolation. */
@@ -92,12 +262,7 @@ async function runPluginCommand({ nodePath, dshHome, runtimeRoot, workingDirecto
   }
 }
 
-/**
- * Detects only prerequisites; it does not initialize a profile, touch the
- * network, or enumerate the npm registry, so opening the application never
- * pays marketplace cost.
- * @returns {Promise<{ nodeVersion: string, pnpmAvailable: boolean, profile: 'web' }>} Environment summary.
- */
+/** Detect only prerequisites; opening the app still pays no marketplace cost. */
 export async function inspectPluginEnvironment({ nodePath }) {
   const nodeVersion = await checkNodeRuntime(nodePath)
   const locator = process.platform === 'win32' ? 'where.exe' : 'which'
@@ -111,13 +276,14 @@ export async function inspectPluginEnvironment({ nodePath }) {
   return { nodeVersion, pnpmAvailable, profile: 'web' }
 }
 
-/** List installed Web-profile dependencies through the official plugin path. */
-export async function listInstalledPlugins(options) {
+/** List installed dependencies, local details, source evidence, and bounded update status. */
+export async function listInstalledPlugins(options, { fetchImpl = globalThis.fetch } = {}) {
   const { stdout } = await runPluginCommand({ ...options, args: ['list', '--depth', '0', '--json'] })
-  return parsePluginList(stdout)
+  const plugins = parsePluginList(stdout)
+  return mapWithConcurrency(plugins, MARKETPLACE_METADATA_CONCURRENCY, plugin => enrichInstalledPlugin(plugin, fetchImpl))
 }
 
-/** Serialize package mutations so two install/remove jobs cannot race one profile manifest. */
+/** Serialize package mutations so two install/remove/update jobs cannot race one profile manifest. */
 function serializeMutation(operation) {
   const run = mutationTail.then(operation, operation)
   mutationTail = run.then(() => undefined, () => undefined)

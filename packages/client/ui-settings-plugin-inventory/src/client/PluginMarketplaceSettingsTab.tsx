@@ -1,8 +1,15 @@
-/** Desktop plugin marketplace: lazy environment/list reads plus bounded install/remove actions. */
+/** Desktop plugin marketplace: lazy environment/list reads plus bounded install/remove/update actions. */
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { PluginInventoryLocaleKey } from './locales.ts'
-import type { MarketplaceEnvironment, MarketplacePlugin, PluginMarketplaceApi } from './marketplace-bridge.ts'
+import type {
+  MarketplaceEnvironment,
+  MarketplacePlugin,
+  MarketplacePluginProvenance,
+  MarketplacePluginSource,
+  MarketplaceUpdateStatus,
+  PluginMarketplaceApi,
+} from './marketplace-bridge.ts'
 import css from './PluginMarketplaceSettingsTab.module.css'
 
 /** Registration-side Electron marketplace face; absent in ordinary browser deployments. */
@@ -39,34 +46,125 @@ const SOURCE_GUIDES = [
   syntax: string
 }[]
 
-/** Render one installed package row. */
+function sourceLocale(source: MarketplacePluginSource | undefined): PluginInventoryLocaleKey {
+  if (source === 'npm') return 'marketplaceSourceNpm'
+  if (source === 'github') return 'marketplaceSourceGithub'
+  return 'marketplaceSourceUnknown'
+}
+
+function provenanceLocale(provenance: MarketplacePluginProvenance | undefined): PluginInventoryLocaleKey {
+  if (provenance === 'deepseek-scope') return 'marketplaceProvenanceDeepSeek'
+  if (provenance === 'registry') return 'marketplaceProvenanceRegistry'
+  if (provenance === 'declared') return 'marketplaceProvenanceDeclared'
+  return 'marketplaceProvenanceUnknown'
+}
+
+function updateLocale(status: MarketplaceUpdateStatus | undefined): PluginInventoryLocaleKey {
+  if (status === 'available') return 'marketplaceUpdateAvailable'
+  if (status === 'current') return 'marketplaceUpToDate'
+  if (status === 'unavailable') return 'marketplaceUpdateUnknown'
+  return 'marketplaceUpdateManual'
+}
+
+/** Render one installed package row with local details and update evidence. */
 function InstalledPlugin({
   plugin,
   disabled,
-  busy,
+  operation,
+  update,
   remove,
   t,
 }: {
   plugin: MarketplacePlugin
   disabled: boolean
-  busy: boolean
+  operation: string | undefined
+  update: (plugin: MarketplacePlugin) => void
   remove: (name: string) => void
   t: PluginMarketplaceSettingsTabProps['t']
 }): ReactNode {
+  const [expanded, setExpanded] = useState(false)
+  const updating = operation === `update:${plugin.name}`
+  const removing = operation === `remove:${plugin.name}`
+  const canUpdate = plugin.updateAvailable === true && plugin.updateSpec !== undefined
+
   return (
     <li className={css.pluginCard}>
-      <div className={css.pluginIdentity}>
-        <strong title={plugin.name}>{plugin.name}</strong>
-        <span>{t('marketplaceVersion')} {plugin.version || '—'}</span>
+      <div className={css.pluginSummary}>
+        <div className={css.pluginIdentity}>
+          <strong title={plugin.name}>{plugin.name}</strong>
+          <span>{t('marketplaceVersion')} {plugin.version || '—'}</span>
+        </div>
+        <div className={css.badges} aria-label={`${plugin.name} metadata`}>
+          <span>{t(sourceLocale(plugin.source))}</span>
+          <span data-provenance={plugin.provenance ?? 'unknown'}>{t(provenanceLocale(plugin.provenance))}</span>
+          <span data-update={plugin.updateStatus ?? 'unavailable'}>{t(updateLocale(plugin.updateStatus))}</span>
+        </div>
       </div>
-      <button
-        className={css.dangerButton}
-        type="button"
-        disabled={disabled}
-        onClick={() => { remove(plugin.name) }}
-      >
-        {busy ? t('marketplaceRemoving') : t('marketplaceRemove')}
-      </button>
+
+      {expanded ? (
+        <div className={css.pluginDetails}>
+          <p className={css.description}>{plugin.description ?? t('marketplaceNoDescription')}</p>
+          <dl>
+            <div>
+              <dt>{t('marketplaceSource')}</dt>
+              <dd>{t(sourceLocale(plugin.source))}</dd>
+            </div>
+            <div>
+              <dt>{t('marketplaceProvenance')}</dt>
+              <dd>{t(provenanceLocale(plugin.provenance))}</dd>
+            </div>
+            <div>
+              <dt>{t('marketplaceLatestVersion')}</dt>
+              <dd>{plugin.latestVersion ?? '—'}</dd>
+            </div>
+            <div>
+              <dt>{t('marketplaceLicense')}</dt>
+              <dd>{plugin.license ?? '—'}</dd>
+            </div>
+          </dl>
+          {plugin.repository !== undefined || plugin.homepage !== undefined ? (
+            <div className={css.pluginLinks}>
+              {plugin.repository !== undefined ? (
+                <a href={plugin.repository} target="_blank" rel="noreferrer">{t('marketplaceRepository')}</a>
+              ) : null}
+              {plugin.homepage !== undefined ? (
+                <a href={plugin.homepage} target="_blank" rel="noreferrer">{t('marketplaceHomepage')}</a>
+              ) : null}
+            </div>
+          ) : null}
+          <p className={css.provenanceNote}>{t('marketplaceProvenanceNote')}</p>
+        </div>
+      ) : null}
+
+      <div className={css.pluginActions}>
+        <button
+          className={css.secondaryButton}
+          type="button"
+          disabled={disabled}
+          aria-expanded={expanded}
+          onClick={() => { setExpanded(current => !current) }}
+        >
+          {expanded ? t('marketplaceHideDetails') : t('marketplaceDetails')}
+        </button>
+        {canUpdate ? (
+          <button
+            className={css.primaryButton}
+            type="button"
+            disabled={disabled}
+            onClick={() => { update(plugin) }}
+          >
+            {updating ? t('marketplaceUpdating') : t('marketplaceUpdate')}
+          </button>
+        ) : null}
+        <button
+          className={css.dangerButton}
+          type="button"
+          disabled={disabled}
+          onClick={() => { remove(plugin.name) }}
+        >
+          {removing ? t('marketplaceRemoving') : t('marketplaceRemove')}
+        </button>
+      </div>
     </li>
   )
 }
@@ -74,7 +172,7 @@ function InstalledPlugin({
 /**
  * Marketplace reads are intentionally started only when this tab mounts. The
  * parent Plugins section mounts tabs on first visit, so application startup
- * never probes pnpm or enumerates the profile.
+ * never probes pnpm, installed manifests, or public package metadata.
  */
 export function PluginMarketplaceSettingsTab({ api, t }: PluginMarketplaceSettingsTabProps): ReactNode {
   const [view, setView] = useState<MarketView>('installed')
@@ -145,6 +243,19 @@ export function PluginMarketplaceSettingsTab({ api, t }: PluginMarketplaceSettin
     } finally {
       setOperation(undefined)
     }
+  }
+
+  const update = (plugin: MarketplacePlugin): void => {
+    if (api === undefined || environment?.pnpmAvailable !== true || operation !== undefined || plugin.updateSpec === undefined) return
+    setOperation(`update:${plugin.name}`)
+    setOperationFailed(false)
+    void api.install(plugin.updateSpec).then(
+      async (result) => {
+        setRestartRequired(current => current || result.restartRequired)
+        try { setPlugins(await api.list()) } catch { /* update succeeded; preserve the prior detail snapshot */ }
+      },
+      () => { setOperationFailed(true) },
+    ).finally(() => { setOperation(undefined) })
   }
 
   const remove = (name: string): void => {
@@ -252,7 +363,8 @@ export function PluginMarketplaceSettingsTab({ api, t }: PluginMarketplaceSettin
                   key={plugin.name}
                   plugin={plugin}
                   disabled={operation !== undefined}
-                  busy={operation === `remove:${plugin.name}`}
+                  operation={operation}
+                  update={update}
                   remove={remove}
                   t={t}
                 />

@@ -8,10 +8,23 @@ export interface MarketplaceEnvironment {
   profile: 'web'
 }
 
+export type MarketplacePluginSource = 'npm' | 'github' | 'unknown'
+export type MarketplacePluginProvenance = 'deepseek-scope' | 'registry' | 'declared' | 'unknown'
+export type MarketplaceUpdateStatus = 'available' | 'current' | 'unavailable' | 'unsupported'
+
 export interface MarketplacePlugin {
   name: string
   version: string
-  path?: string
+  description?: string
+  homepage?: string
+  repository?: string
+  license?: string
+  source?: MarketplacePluginSource
+  provenance?: MarketplacePluginProvenance
+  latestVersion?: string
+  updateAvailable?: boolean
+  updateStatus?: MarketplaceUpdateStatus
+  updateSpec?: string
 }
 
 export interface MarketplaceMutationResult {

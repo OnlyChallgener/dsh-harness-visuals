@@ -22,7 +22,9 @@
 .hero p,
 .sourceCard p,
 .status,
-.operationError {
+.operationError,
+.description,
+.provenanceNote {
   margin: 0;
 }
 
@@ -37,7 +39,9 @@
 .trustNote,
 .notice span,
 .warning span,
-.restartBanner span {
+.restartBanner span,
+.description,
+.provenanceNote {
   color: var(--dsw-alias-label-secondary);
   font-size: 12px;
   line-height: 18px;
@@ -50,7 +54,8 @@
   gap: 6px;
 }
 
-.runtimeBadges span {
+.runtimeBadges span,
+.badges span {
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 999px;
   padding: 3px 8px;
@@ -61,8 +66,15 @@
   white-space: nowrap;
 }
 
-.runtimeBadges span[data-ready='false'] {
+.runtimeBadges span[data-ready='false'],
+.badges span[data-update='unavailable'],
+.badges span[data-update='unsupported'] {
   color: var(--dsw-alias-state-warn-primary);
+}
+
+.badges span[data-update='available'] {
+  border-color: color-mix(in srgb, var(--dsw-alias-brand-primary) 35%, var(--dsw-alias-border-l2));
+  color: var(--dsw-alias-brand-primary);
 }
 
 .viewTabs {
@@ -202,13 +214,19 @@
 
 .pluginCard {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  flex-direction: column;
+  gap: 10px;
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 10px;
   padding: 11px 12px;
   background: var(--dsw-alias-bg-layer-1);
+}
+
+.pluginSummary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .pluginIdentity {
@@ -230,6 +248,69 @@
   color: var(--dsw-alias-label-secondary);
   font-size: 11px;
   line-height: 16px;
+}
+
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.pluginActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.pluginDetails {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+  padding-top: 10px;
+}
+
+.pluginDetails dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 14px;
+  margin: 0;
+}
+
+.pluginDetails dl > div {
+  min-width: 0;
+}
+
+.pluginDetails dt {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.pluginDetails dd {
+  margin: 1px 0 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.pluginLinks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.pluginLinks a {
+  color: var(--dsw-alias-brand-primary);
+  font-size: 12px;
+  line-height: 18px;
+  text-decoration: none;
+}
+
+.pluginLinks a:hover {
+  text-decoration: underline;
 }
 
 .sourceGrid {
@@ -315,15 +396,19 @@
 @media (max-width: 680px) {
   .hero,
   .bodyHeader,
-  .restartBanner {
+  .restartBanner,
+  .pluginSummary {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .runtimeBadges {
+  .runtimeBadges,
+  .badges,
+  .pluginActions {
     justify-content: flex-start;
   }
 
+  .pluginDetails dl,
   .sourceGrid {
     grid-template-columns: minmax(0, 1fr);
   }
