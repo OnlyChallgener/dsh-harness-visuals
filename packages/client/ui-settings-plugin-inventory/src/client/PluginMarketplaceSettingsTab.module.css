@@ -1,0 +1,334 @@
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+  max-width: 760px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.hero,
+.bodyHeader,
+.restartBanner,
+.notice,
+.warning {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.hero h3,
+.hero p,
+.sourceCard p,
+.status,
+.operationError {
+  margin: 0;
+}
+
+.hero h3 {
+  font-size: 16px;
+  line-height: 24px;
+}
+
+.hero p,
+.bodyHeader span,
+.installForm > span,
+.trustNote,
+.notice span,
+.warning span,
+.restartBanner span {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.runtimeBadges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.runtimeBadges span {
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 999px;
+  padding: 3px 8px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.runtimeBadges span[data-ready='false'] {
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+.viewTabs {
+  display: inline-flex;
+  align-self: flex-start;
+  gap: 4px;
+  border-radius: 9px;
+  padding: 3px;
+  background: var(--dsw-alias-bg-module-platform);
+}
+
+.viewTabs button {
+  min-width: 88px;
+  border: 0;
+  border-radius: 7px;
+  padding: 6px 12px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.viewTabs button[data-active='true'] {
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 8%);
+}
+
+.status {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.failure {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 13px;
+}
+
+.failure button,
+.secondaryButton,
+.dangerButton,
+.primaryButton {
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  min-height: 32px;
+  padding: 5px 11px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.failure button,
+.secondaryButton,
+.dangerButton {
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+}
+
+.primaryButton {
+  border-color: var(--dsw-alias-brand-primary);
+  background: var(--dsw-alias-brand-primary);
+  color: white;
+}
+
+.dangerButton {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.failure button:hover:not(:disabled),
+.secondaryButton:hover:not(:disabled),
+.dangerButton:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.primaryButton:hover:not(:disabled) {
+  filter: brightness(0.96);
+}
+
+.failure button:disabled,
+.secondaryButton:disabled,
+.dangerButton:disabled,
+.primaryButton:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.notice,
+.warning,
+.restartBanner {
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.notice,
+.warning,
+.restartBanner > div {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.warning {
+  align-items: flex-start;
+  justify-content: flex-start;
+  flex-direction: column;
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+.marketBody {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.bodyHeader > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pluginList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pluginCard {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
+  padding: 11px 12px;
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.pluginIdentity {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pluginIdentity strong {
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pluginIdentity span {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.sourceGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.sourceCard {
+  min-width: 0;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
+  padding: 13px;
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.sourceCard strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 13px;
+}
+
+.sourceCard code {
+  display: block;
+  margin-top: 8px;
+  overflow-wrap: anywhere;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+}
+
+.trustNote {
+  margin: 0;
+}
+
+.installForm {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+  padding-top: 12px;
+}
+
+.installForm label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.installControls {
+  display: flex;
+  gap: 8px;
+}
+
+.installControls input {
+  min-width: 0;
+  height: 34px;
+  flex: 1;
+  box-sizing: border-box;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  padding: 0 10px;
+  outline: none;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.installControls input:focus-visible {
+  border-color: var(--dsw-alias-brand-primary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--dsw-alias-brand-primary) 18%, transparent);
+}
+
+.operationError {
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.restartBanner {
+  border-color: var(--dsw-alias-brand-primary);
+}
+
+@media (max-width: 680px) {
+  .hero,
+  .bodyHeader,
+  .restartBanner {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .runtimeBadges {
+    justify-content: flex-start;
+  }
+
+  .sourceGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .installControls {
+    flex-direction: column;
+  }
+}

@@ -17,6 +17,12 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { writeWindowsClipboardText } from './clipboard.mjs'
 import {
+  inspectPluginEnvironment,
+  installPlugin,
+  listInstalledPlugins,
+  removePlugin,
+} from './plugin-marketplace.mjs'
+import {
   checkNodeRuntime,
   runWindowsOcr,
   selectHarnessPort,
@@ -286,6 +292,16 @@ function openDataDirectory() {
   void shell.openPath(join(app.getPath('userData'), 'harness-data'))
 }
 
+/** Resolve the same local runtime paths used by bootHarness for marketplace operations. */
+function pluginMarketplaceOptions() {
+  return {
+    nodePath: process.env.DSH_DESKTOP_NODE ?? (process.platform === 'win32' ? 'node.exe' : 'node'),
+    dshHome: join(app.getPath('userData'), 'harness-data'),
+    runtimeRoot: app.isPackaged ? join(process.resourcesPath, 'runtime') : join(import.meta.dirname, 'runtime'),
+    workingDirectory: app.getPath('documents'),
+  }
+}
+
 /** Accepts only bounded binary image payloads crossing the isolated renderer bridge. */
 function imagePayload(value) {
   if (value === null || typeof value !== 'object') throw new Error('Invalid image payload.')
@@ -472,6 +488,10 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     openDataDirectory()
     return true
   })
+  ipcMain.handle('desktop:plugin-marketplace-environment', () => inspectPluginEnvironment(pluginMarketplaceOptions()))
+  ipcMain.handle('desktop:plugin-marketplace-list', () => listInstalledPlugins(pluginMarketplaceOptions()))
+  ipcMain.handle('desktop:plugin-marketplace-install', (_event, spec) => installPlugin(pluginMarketplaceOptions(), spec))
+  ipcMain.handle('desktop:plugin-marketplace-remove', (_event, name) => removePlugin(pluginMarketplaceOptions(), name))
   ipcMain.handle('desktop:copy-image', (_event, value) => {
     const { data } = imagePayload(value)
     const image = nativeImage.createFromBuffer(data)
