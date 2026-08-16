@@ -78,12 +78,14 @@ test('passes Harness settings without leaking unrelated secrets', () => {
   })
 })
 
-test('validates marketplace package specs without exposing pnpm options', () => {
+test('validates marketplace package specs without exposing pnpm or shell syntax', () => {
   assert.equal(pluginSpec('@scope/plugin@1.2.3'), '@scope/plugin@1.2.3')
   assert.equal(pluginSpec('github:owner/plugin'), 'github:owner/plugin')
   assert.equal(pluginPackageName('@scope/plugin'), '@scope/plugin')
-  assert.throws(() => pluginSpec('--global'), /unsupported command syntax/)
-  assert.throws(() => pluginSpec('plugin\nremove other'), /unsupported command syntax/)
+  assert.throws(() => pluginSpec('--global'), /npm package\/version or github:/)
+  assert.throws(() => pluginSpec('plugin\nremove other'), /npm package\/version or github:/)
+  assert.throws(() => pluginSpec('plugin&calc'), /npm package\/version or github:/)
+  assert.throws(() => pluginSpec('file:..\\plugin'), /npm package\/version or github:/)
   assert.throws(() => pluginPackageName('plugin@1.2.3'), /package name is invalid/)
 })
 
