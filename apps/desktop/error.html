@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src file:; style-src 'unsafe-inline'; script-src 'unsafe-inline'" />
+    <title>DeepSeek Harness</title>
+    <style>
+      :root { color-scheme: dark; font-family: Inter, "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif; }
+      * { box-sizing: border-box; }
+      body { align-items: center; background: radial-gradient(circle at 18% 12%, #2f1d4b 0, transparent 36%), radial-gradient(circle at 82% 88%, #092b48 0, transparent 34%), #07111f; color: #eff6ff; display: flex; height: 100vh; justify-content: center; margin: 0; }
+      main { backdrop-filter: blur(24px); background: linear-gradient(145deg, rgba(24, 30, 53, .9), rgba(7, 20, 37, .8)); border: 1px solid rgba(196, 181, 253, .16); border-radius: 28px; box-shadow: 0 28px 90px rgba(0, 0, 0, .48); max-width: 620px; padding: 50px 56px 46px; text-align: center; width: calc(100% - 48px); }
+      .icon { border-radius: 18px; display: flex; height: 58px; justify-content: center; margin: 0 auto 24px; overflow: hidden; width: 58px; }
+      .icon img { display: block; height: 100%; width: 100%; }
+      h1 { font-size: 24px; font-weight: 650; letter-spacing: -.02em; margin: 0 0 12px; }
+      .lead { color: #9fb1c8; font-size: 14px; line-height: 1.7; margin: 0 auto 26px; }
+      #message, #log { background: rgba(3, 10, 22, .6); border: 1px solid rgba(148, 163, 184, .13); border-radius: 12px; color: #cbd5e1; font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; line-height: 1.6; margin: 0 0 14px; overflow-wrap: anywhere; padding: 14px 16px; text-align: left; }
+      #log { max-height: 180px; overflow: auto; white-space: pre-wrap; }
+      .actions { display: flex; gap: 12px; justify-content: center; }
+      button { border: 0; border-radius: 10px; cursor: pointer; font-size: 14px; font-weight: 600; padding: 11px 18px; transition: transform .15s ease, background .15s ease; }
+      button:hover { transform: translateY(-1px); }
+      #restart { background: linear-gradient(135deg, #0ea5e9, #2563eb); box-shadow: 0 8px 24px rgba(14, 165, 233, .22); color: white; }
+      #browser, #data { background: rgba(148, 163, 184, .1); border: 1px solid rgba(148, 163, 184, .15); color: #dbeafe; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="icon"><img src="./build/icon.svg" alt="" /></div>
+      <h1>Harness 未能正常启动</h1>
+      <p class="lead">本地数据没有丢失。你可以重新启动服务，或在服务已经可用时通过浏览器打开。</p>
+      <p id="message">正在读取错误信息…</p>
+      <pre id="log">正在读取启动诊断…</pre>
+      <div class="actions"><button id="restart">重新启动</button><button id="browser">在浏览器中打开</button><button id="data">打开数据目录</button></div>
+    </main>
+    <script type="module">
+      document.querySelector('#message').textContent = await window.desktop.startupError() ?? 'Harness 在启动前退出。'
+      document.querySelector('#log').textContent = await window.desktop.startupLog() || '没有可用的启动诊断。'
+      document.querySelector('#restart').addEventListener('click', () => window.desktop.restart())
+      document.querySelector('#browser').addEventListener('click', () => window.desktop.openBrowser())
+      document.querySelector('#data').addEventListener('click', () => window.desktop.openDataDirectory())
+    </script>
+  </body>
+</html>

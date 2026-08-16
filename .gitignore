@@ -26,6 +26,41 @@ tmp/
 .idea
 mise.toml
 dist-exe/
+# Electron's unpacked Windows runtime must never be written into the repository
+# root by a local desktop smoke install.
+/DeepSeek Harness.exe
+/Uninstall.exe
+/LICENSES.chromium.html
+/chrome_100_percent.pak
+/chrome_200_percent.pak
+/d3dcompiler_47.dll
+/dxcompiler.dll
+/dxil.dll
+/ffmpeg.dll
+/icudtl.dat
+/libEGL.dll
+/libGLESv2.dll
+/resources.pak
+/snapshot_blob.bin
+/v8_context_snapshot.bin
+/version
+/vk_swiftshader.dll
+/vk_swiftshader_icd.json
+/vulkan-1.dll
+/locales/
+/resources/
+# Local desktop packaging, unpacked installers, and date-stamped smoke data.
+/apps/desktop/node_modules/
+/apps/desktop/dist/
+/apps/desktop/dist-*/
+/apps/desktop/manual-stage/
+/apps/desktop/.icon-render/
+/apps/desktop/desktop-*-userdata-*/
+/apps/desktop/install-smoke-*/
+/apps/desktop/patch-smoke-home*/
+/apps/desktop/patch-startup-home*/
+/apps/desktop/plugin-smoke-*/
+/apps/desktop/runtime-copy-test-*/
 python/sdk-runtime/src/deepseek_harness_runtime/runtime/dsh-jsonrpc-agent-*
 python/sdk-runtime/src/deepseek_harness_runtime/runtime/node/
 python/**/__pycache__/
@@ -38,3 +73,6 @@ apps/web/dist/
 worktrees/
 .agents/worktrees/
 .typert-*/
+_extracted_*.cjs
+_extracted_*.mjs
+.workbuddy/

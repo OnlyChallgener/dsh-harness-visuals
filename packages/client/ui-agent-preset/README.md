@@ -2,11 +2,13 @@
 
 English | [中文](README.zh.md)
 
-The agent-preset surfaces: a General-settings row choosing which [preset](../../preset/agent-presets/README.md) new sessions are composed from, a chip on the new-session screen choosing the next session's, a read-only label in the session header, and a settings section that manages the roster — copy, delete, default, and the way into a preset's own files.
+The agent-preset surfaces: a General-settings row choosing which [preset](../../preset/agent-presets/README.md) new sessions are composed from, a chip on the new-session screen choosing the next session's, a switchable label in the session header, and a settings section that manages the roster — copy, delete, default, and the way into a preset's own files.
 
-## Why it is a new-session preference
+## Why the new-session choice and the header switch differ
 
-A session's preset is fixed when the session is created — the host refuses to adopt an existing session under a different one, because that session's history was produced under the first preset's tools. So this row cannot be a live switch, and it says so: changing it applies to sessions started afterwards while running sessions keep the composition they began with.
+A session is composed from a preset at creation, and the host refuses to ADOPT an existing session under a different one — that session's history was produced under the first preset's tools. So the General row cannot be a live switch, and it says so: changing it applies to sessions started afterwards.
+
+The session-header label is the live switch. It recomposes the running agent from another preset, and the change applies from the next turn on: earlier turns keep rendering through the composition they recorded, and the switch is logged, so a resumed session rebuilds the preset it last ran.
 
 ## The new-session chip
 
@@ -14,11 +16,11 @@ A second surface, beside the workspace picker on the new-session screen. It sits
 
 The chip opens on the deployment default and its pick is *staged* — the screen precedes the session it would apply to. The stage reaches a session when one becomes current and is still blank, which covers both the session the workspace connect created and the blank one it reused; riding along on `sessions.create` would miss the second. It is spent on first use, so the next new session opens on the default again, exactly like the workspace picker beside it.
 
-A session that has started is refused rather than queued: the host answers `agent-preset-locked`, and the stage is dropped instead of waiting for a session that will never accept it.
+A session that has started is not the session the chip is picking for, so the stage is dropped rather than queued; switching that session goes through the header label instead.
 
 ## The session-header label
 
-A third surface, beside the session title: the preset THIS session runs, as static chrome. A control there would promise a switch the host refuses outright. It reads the preset from the session's own summary and resolves the display name against the same roster the General row reads. Forwarded `agent-preset/selected` owner events fold committed blank-session switches into that shared summary in every tab; the initiating tab may already have applied the RPC echo, and the merge is idempotent.
+A third surface, beside the session title: the preset THIS session runs, switchable through the same roster menu the other pickers use. It reads the preset from the session's own summary and resolves the display name against the roster the General row reads. Forwarded `agent-preset/selected` owner events fold committed switches into that shared summary in every tab; the initiating tab may already have applied the RPC echo, and the merge is idempotent.
 
 ## What it reads and writes
 

@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import type { MouseEvent } from 'react'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { ImageLightbox } from './ImageLightbox.tsx'
 import type { ImageLightboxLabels } from './ImageLightbox.tsx'
+import { ImageContextMenu } from './ImageContextMenu.tsx'
+import { copyImage, copyOcrText, downloadImage, hasNativeOcr, runNativeOcr } from './image-actions.ts'
 import css from './MessageImage.module.css'
 
 /** Loads a session-authorized durable image URL. */
@@ -60,11 +63,28 @@ export function MessageImage({ attachment, load, variant, labels }: {
   const [src, setSrc] = useState<string | null>(null)
   const [error, setError] = useState(false)
   const [open, setOpen] = useState(false)
+  const [menu, setMenu] = useState<{ x: number; y: number } | undefined>()
   // Retry re-arms the one load effect below, so every attempt — first load or
   // retry — runs under the same liveness guard and the same reset.
   const [attempt, setAttempt] = useState(0)
   const request = useCallback(() => { setAttempt(a => a + 1) }, [])
   const close = useCallback(() => { setOpen(false) }, [])
+  const copy = useCallback(async () => {
+    if (src === null || !await copyImage(src)) throw new Error('Image clipboard write was refused.')
+  }, [src])
+  const download = useCallback(async () => {
+    if (src === null || !await downloadImage(src, attachment.name ?? 'image.png')) throw new Error('Image save was cancelled.')
+  }, [src, attachment.name])
+  const ocr = useCallback(async () => {
+    if (src === null) throw new Error('Image is not loaded.')
+    const text = await runNativeOcr(src)
+    if (text === undefined || !(await copyOcrText(text))) throw new Error('Windows OCR is unavailable.')
+  }, [src])
+  const openMenu = useCallback((event: MouseEvent) => {
+    if (src === null) return
+    event.preventDefault()
+    setMenu({ x: event.clientX, y: event.clientY })
+  }, [src])
   const fit = useMemo(
     () => (variant === 'single' ? singleFit(attachment) : undefined),
     [attachment, variant],
@@ -90,12 +110,26 @@ export function MessageImage({ attachment, load, variant, labels }: {
         title={labels.open}
         aria-label={labels.openNamed(label)}
         onClick={() => { if (src !== null) setOpen(true) }}
+        onContextMenu={openMenu}
       >
         {src === null
           ? <span className={css.loading}>{labels.loading}</span>
           : <img src={src} alt={label} style={fit === undefined ? undefined : { objectPosition: fit.objectPosition }} />}
       </button>
-      {open && src !== null && <ImageLightbox src={src} alt={label} labels={labels.lightbox} onClose={close} />}
+      {open && src !== null ? (
+        <ImageLightbox src={src} alt={label} labels={labels.lightbox} onClose={close} onCopy={copy} onDownload={download} onOcr={ocr} />
+      ) : null}
+      {menu !== undefined ? (
+        <ImageContextMenu
+          {...menu}
+          labels={labels.lightbox}
+          canOcr={hasNativeOcr()}
+          onCopy={copy}
+          onDownload={download}
+          onOcr={ocr}
+          onClose={() => { setMenu(undefined) }}
+        />
+      ) : null}
     </>
   )
 }

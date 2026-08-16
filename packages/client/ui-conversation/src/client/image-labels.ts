@@ -60,10 +60,17 @@ export function attachmentErrorText(
 /**
  * Resolve the original-image lightbox strings.
  * @param t - the conversation-namespace translate.
- * @returns the lightbox dialog and close-control labels.
+ * @returns the lightbox dialog and image-action labels.
  */
 export function lightboxLabels(t: Translate<ConversationKey>): ImageLightboxLabels {
-  return { dialog: t('image.preview'), close: t('image.closePreview') }
+  return {
+    dialog: t('image.preview'),
+    close: t('image.closePreview'),
+    copy: t('image.copyImage'),
+    copied: t('image.copyImageDone'),
+    download: t('image.downloadImage'),
+    ocr: t('image.ocr'),
+  }
 }
 
 /**

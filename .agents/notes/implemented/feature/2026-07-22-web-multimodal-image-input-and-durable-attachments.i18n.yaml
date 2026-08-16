@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-07-22-web-multimodal-image-input-and-durable-attachments.md
-2026-07-22-web-multimodal-image-input-and-durable-attachments.md: fcbe301f705f8e01095eac9a02329904626af843
-2026-07-22-web-multimodal-image-input-and-durable-attachments.zh.md: 338f27c6db934092b62ed6107f8706fe451b6a4b
+2026-07-22-web-multimodal-image-input-and-durable-attachments.md: 3ae29dc6c96c0ff614417003f0b59f4b3b7569b5
+2026-07-22-web-multimodal-image-input-and-durable-attachments.zh.md: 811044f73d3461de44c7129ba67cc0374df90bf1

@@ -1,8 +1,9 @@
 /**
- * A session's agent preset is fixed at creation. The gateway records the
- * resolved id on the header and refuses to adopt the identity under a different
- * one, because the session's history was produced under that preset's tools:
- * rebuilding it differently would replay tool calls the new agent cannot make.
+ * A session's agent preset is recorded on the header at creation and can be
+ * switched afterwards: the gateway refuses to ADOPT an existing identity under
+ * a different preset (that would replay its history under tools it never ran),
+ * while `agentPresets.select` recomposes a live session at any time and logs
+ * the switch so a resume rebuilds the preset it last ran.
  */
 
 import { mkdtempSync, realpathSync } from 'node:fs'
@@ -427,19 +428,23 @@ describe('agentPreset.select', () => {
     expect(resolveSessionPreset(session)).toBe('standard')
   })
 
-  it('refuses once the conversation has started', async () => {
+  it('switches a session after its conversation has started', async () => {
     const { api, ctx } = await harness(['standard', 'minimal'])
     await api.sessions.create(request({ sessionId: SessionId('sel-2'), agentPreset: 'standard' }))
-    // One turn is enough: the history from here on was produced under
-    // `standard`'s tools, and a swap would strand those tool calls.
+    // One turn is enough to make the point: history was produced under
+    // `standard`'s tools, and the switch must still land from the next turn.
     ctx.sessions.get(SessionId('sel-2'))?.append('turn/start', { turn: 0 })
 
     const response = await api.agentPresets.select(
       request({ sessionId: SessionId('sel-2'), agentPreset: 'minimal' }))
 
-    expect(response.result.ok).toBe(false)
-    if (response.result.ok) throw new Error('unreachable')
-    expect(response.result.error.code).toBe('agent-preset-locked')
+    expect(response.result.ok).toBe(true)
+    if (!response.result.ok) throw new Error('unreachable')
+    expect(response.result.value.agentPreset).toBe('minimal')
+    const session = ctx.sessions.get(SessionId('sel-2'))
+    if (session === undefined) throw new Error('unreachable')
+    // The switch is logged, so a resume rebuilds the preset it last ran.
+    expect(resolveSessionPreset(session)).toBe('minimal')
   })
 
   it('reports an unknown preset without disturbing the session', async () => {

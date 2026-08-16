@@ -75,9 +75,12 @@ describe('assistant images through the label bridge', () => {
     await view.findByAltText('history.png')
     fireEvent.click(frame)
     expect(view.getByRole('dialog', { name: '原图预览' })).toBeTruthy()
+    expect(view.getByRole('button', { name: '复制图片' })).toBeTruthy()
+    expect(view.getByRole('button', { name: '下载图片' })).toBeTruthy()
     fireEvent.click(view.getByRole('button', { name: '关闭原图预览' }))
     expect(view.queryByRole('dialog', { name: '原图预览' })).toBeNull()
   })
+
 
   it('resolves the active English dictionary', async () => {
     const view = render(

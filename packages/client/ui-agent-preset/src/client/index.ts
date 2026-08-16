@@ -125,6 +125,7 @@ export function apply(ctx: ClientContext): void {
     const labelInjected = (): AgentPresetLabelInjected => ({
       hooks: { agentPresets: controller.store },
       load: () => controller.load(),
+      select: (sessionId: string, agentPreset: string) => seat.selectFor(sessionId, agentPreset),
     })
 
     scope.effect(() => {

@@ -255,7 +255,7 @@ describe('the new-session chip controller', () => {
           options.writes?.push({ ns: 'select', patch: payload.agentPreset })
           return Promise.resolve(options.failSelect === undefined
             ? { rpcId: 'r', result: { ok: true as const, value: { agentPreset: payload.agentPreset } } }
-            : { rpcId: 'r', result: { ok: false as const, error: { code: 'agent-preset-locked', message: options.failSelect, details: {} } } })
+            : { rpcId: 'r', result: { ok: false as const, error: { code: 'internal', message: options.failSelect, details: {} } } })
         },
       },
     } as unknown as IApiClient

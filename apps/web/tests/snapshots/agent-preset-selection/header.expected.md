@@ -1,7 +1,10 @@
 - navigation "Session hierarchy":
   - button "Seeded turn" [disabled]
 - img
-- text: Minimal mode
+- button "Minimal mode":
+  - img
+  - text: Minimal mode
+  - img
 - button "1 subagent":
   - text: 1 subagent
   - img

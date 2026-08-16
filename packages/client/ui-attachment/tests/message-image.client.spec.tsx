@@ -14,7 +14,7 @@ const labels: MessageImageLabels = {
   openNamed: label => `${label}，点击查看原图`,
   loading: '图片加载中…',
   loadFailed: '图片加载失败，点击重试',
-  lightbox: { dialog: '原图预览', close: '关闭原图预览' },
+  lightbox: { dialog: '原图预览', close: '关闭原图预览', copy: '复制图片', copied: '已复制', download: '下载图片', ocr: 'Windows OCR 提取文字' },
 }
 
 const attachment = {
@@ -40,6 +40,37 @@ describe('MessageImage', () => {
     expect(view.getByRole('dialog', { name: '原图预览' })).toBeTruthy()
     fireEvent.click(view.getByRole('button', { name: '关闭原图预览' }))
     expect(view.queryByRole('dialog', { name: '原图预览' })).toBeNull()
+  })
+
+  it('opens image actions from the conversation thumbnail context menu', async () => {
+    const load = vi.fn().mockResolvedValue('blob:history')
+    const view = render(<MessageImage attachment={attachment} load={load} variant="single" labels={labels} />)
+    const frame = view.getByRole('button', { name: 'history.png，点击查看原图' })
+    await waitFor(() => { expect(view.getByAltText('history.png')).toBeTruthy() })
+    fireEvent.contextMenu(frame, { clientX: 20, clientY: 30 })
+    expect(view.getByRole('menu')).toBeTruthy()
+    expect(view.getByRole('menuitem', { name: '复制图片' })).toBeTruthy()
+    expect(view.getByRole('menuitem', { name: '下载图片' })).toBeTruthy()
+  })
+
+  it('fills image actions missing from an older conversation UI plugin', async () => {
+    const originalLanguage = document.documentElement.lang
+    document.documentElement.lang = 'zh-CN'
+    const legacyLabels = {
+      ...labels,
+      lightbox: { dialog: '原图预览', close: '关闭原图预览' },
+    } as unknown as MessageImageLabels
+    try {
+      const load = vi.fn().mockResolvedValue('blob:history')
+      const view = render(<MessageImage attachment={attachment} load={load} variant="single" labels={legacyLabels} />)
+      const frame = view.getByRole('button', { name: 'history.png，点击查看原图' })
+      await waitFor(() => { expect(view.getByAltText('history.png')).toBeTruthy() })
+      fireEvent.contextMenu(frame, { clientX: 20, clientY: 30 })
+      expect(view.getByRole('menuitem', { name: '复制图片' })).toBeTruthy()
+      expect(view.getByRole('menuitem', { name: '下载图片' })).toBeTruthy()
+    } finally {
+      document.documentElement.lang = originalLanguage
+    }
   })
 
   it('ignores a click while the thumbnail is still loading', () => {

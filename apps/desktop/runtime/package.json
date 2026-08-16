@@ -1,0 +1,16 @@
+{
+  "name": "@deepseek-ai/dsh-desktop-runtime",
+  "version": "0.1.0-rc.7",
+  "private": true,
+  "description": "Pinned published runtime embedded by DeepSeek Harness Desktop",
+  "allowScripts": {
+    "@deepseek-ai/dsh-subprocess-local": false,
+    "@google/genai": false,
+    "koffi": false,
+    "node-pty": false,
+    "protobufjs": false
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh": "0.1.0-rc.6"
+  }
+}

@@ -152,8 +152,9 @@ export class AgentPresetSeatController {
     const staged = this.staged
     const session = this.currentSession()
     if (staged === undefined || session === undefined) return
-    // A started session's history was produced under its own composition; the
-    // host refuses the swap, so the stage is no longer meaningful.
+    // The hero chip picks for the session about to start; a session that has
+    // already run a turn is not that session, so the stage is no longer
+    // meaningful. Switching a live session goes through selectFor() instead.
     if (!session.blank || session.agentPreset === staged) {
       this.staged = undefined
       return
@@ -173,5 +174,21 @@ export class AgentPresetSeatController {
       this.staged = undefined
       this.set({ busy: false, error: messageOf(error), current: this.fallback })
     }
+  }
+
+  /**
+   * Recompose one specific session from another preset (the header label's
+   * switch). The host allows it at any time, blank or started; the change
+   * applies from the next turn on.
+   * @param sessionId - the session to switch.
+   * @param id - the preset to compose from instead.
+   * @returns once the host settled the switch.
+   */
+  async selectFor(sessionId: string, id: string): Promise<void> {
+    const response = await this.api.agentPresets.select({ sessionId: sessionId as never, agentPreset: id })
+    if (!response.result.ok) {
+      throw new Error(response.result.error.message)
+    }
+    this.onApplied?.(sessionId, response.result.value.agentPreset)
   }
 }

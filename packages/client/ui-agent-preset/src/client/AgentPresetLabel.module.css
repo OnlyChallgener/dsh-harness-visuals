@@ -1,4 +1,4 @@
-/* Session-header agent-preset label: static chrome, never a control. */
+/* Session-header agent-preset label: a compact control opening the roster. */
 
 .label {
   display: inline-flex;
@@ -15,9 +15,42 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  border: 0;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.label:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .icon {
   flex: none;
   opacity: 0.7;
+}
+
+.chevron {
+  flex: none;
+  opacity: 0.7;
+}
+
+.item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 0;
+}
+
+.itemName {
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary);
+}
+
+.itemDesc {
+  font-size: 12px;
+  line-height: 17px;
+  color: var(--dsw-alias-label-secondary);
 }

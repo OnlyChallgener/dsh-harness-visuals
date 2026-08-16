@@ -13,6 +13,7 @@ import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts
 import type {
   ChatConversationViewNode, ConversationNode,
 } from '@deepseek-ai/dsh-client-runtime/client'
+import type { ImageLoader } from '@deepseek-ai/dsh-client-ui-attachment'
 import type { ChatNodeViewProps } from '../src/client/contract/slots.ts'
 import {
   formatMessageClock, msUntilNextLocalMidnight, startOfLocalDay,
@@ -38,6 +39,7 @@ afterEach(() => {
   cleanup()
   vi.useRealTimers()
   vi.unstubAllGlobals()
+  Object.defineProperty(window, 'desktop', { configurable: true, value: undefined })
 })
 
 // Mirrors the real lookup chain (conversation namespace, then common).
@@ -47,10 +49,11 @@ const RETRY_ID = 'retry-fixture' as Extract<ConversationNode, { kind: 'model-ret
 interface MessageItemProps {
   readonly node: ConversationNode
   readonly t: ChatNodeViewProps['t']
+  readonly loadImage?: ImageLoader
 }
 
 /** Legacy-node fixture adapter for the independently registered renderers. */
-function MessageItem({ node, t: translate }: MessageItemProps) {
+function MessageItem({ node, t: translate, loadImage }: MessageItemProps) {
   const kind = node.kind === 'assistant' ? 'assistant-step' : node.kind
   const viewNode: ChatConversationViewNode = {
     key: `fixture:${node.kind}:${node.seq}`,
@@ -62,7 +65,7 @@ function MessageItem({ node, t: translate }: MessageItemProps) {
     visibility: 'visible',
     data: node.kind === 'model-retry' ? { attempts: [node], current: node } : node,
   }
-  const props = { node: viewNode, t: translate } as ChatNodeViewProps
+  const props = { node: viewNode, loadImage, t: translate } as ChatNodeViewProps
   switch (node.kind) {
     case 'user':
     case 'steering':
@@ -133,6 +136,7 @@ describe('MessageItem arms', () => {
       configurable: true,
       value: { writeText: vi.fn().mockRejectedValue(new Error('denied')) },
     })
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: undefined })
     render(
       <MessageItem t={t} node={{
         kind: 'user', seq: 1, time: 1_000,
@@ -148,6 +152,87 @@ describe('MessageItem arms', () => {
     })
     expect(screen.getByRole('button', { name: '复制' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: '复制成功' })).toBeNull()
+  })
+
+  it('renders a durable image beside OCR text and copies the image bytes', async () => {
+    const copyImage = vi.fn().mockResolvedValue(true)
+    Object.defineProperty(window, 'desktop', {
+      configurable: true,
+      value: {
+        copyImage,
+        saveImage: vi.fn().mockResolvedValue(true),
+      },
+    })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      blob: () => Promise.resolve(new Blob([Uint8Array.of(137, 80, 78, 71)], { type: 'image/png' })),
+    }))
+    const loadImage = vi.fn().mockResolvedValue('blob:history')
+    const attachment = {
+      attachmentId: 'image-copy',
+      mediaType: 'image/png',
+      bytes: 4,
+      width: 1,
+      height: 1,
+      name: 'pasted.png',
+    }
+    const view = render(
+      <MessageItem
+        t={t}
+        loadImage={loadImage}
+        node={{
+          kind: 'user', seq: 1, time: 1_000,
+          content: [
+            { type: 'image', attachment },
+            { type: 'text', text: 'OCR text must not replace the image' },
+          ] as never,
+          source: null,
+        }}
+      />,
+    )
+
+    expect(await view.findByAltText('pasted.png')).toBeTruthy()
+    expect(view.getByText('OCR text must not replace the image')).toBeTruthy()
+    fireEvent.click(view.getByRole('button', { name: '复制' }))
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(copyImage).toHaveBeenCalledWith(expect.any(ArrayBuffer), 'image/png')
+    expect(view.getByRole('button', { name: '复制成功' })).toBeTruthy()
+  })
+
+  it('releases an image-copy button after the image loader rejects', async () => {
+    const loadImage = vi.fn().mockRejectedValue(new Error('attachment unavailable'))
+    const attachment = {
+      attachmentId: 'image-failed-copy',
+      mediaType: 'image/png',
+      bytes: 1,
+      width: 1,
+      height: 1,
+    }
+    const view = render(
+      <MessageItem
+        t={t}
+        loadImage={loadImage}
+        node={{
+          kind: 'user', seq: 1, time: 1_000,
+          content: [{ type: 'image', attachment }] as never,
+          source: null,
+        }}
+      />,
+    )
+
+    const copy = view.getByRole('button', { name: '复制' })
+    fireEvent.click(copy)
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    fireEvent.click(copy)
+    expect(loadImage).toHaveBeenCalledTimes(3)
+    expect(view.queryByRole('button', { name: '复制成功' })).toBeNull()
   })
 
   it('copy swaps to the check success chrome, gates re-clicks, and reverts after a second', async () => {

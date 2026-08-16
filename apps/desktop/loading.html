@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src file:; style-src 'unsafe-inline'" />
+    <title>DeepSeek Harness</title>
+    <style>
+      :root { color-scheme: dark; font-family: Inter, "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif; }
+      * { box-sizing: border-box; }
+      body { align-items: center; background: radial-gradient(circle at 22% 12%, #12325c 0, transparent 36%), radial-gradient(circle at 82% 86%, #092b48 0, transparent 34%), #07111f; color: #eff6ff; display: flex; height: 100vh; justify-content: center; margin: 0; overflow: hidden; }
+      body::before { background-image: linear-gradient(rgba(148, 163, 184, .035) 1px, transparent 1px), linear-gradient(90deg, rgba(148, 163, 184, .035) 1px, transparent 1px); background-size: 34px 34px; content: ""; inset: 0; mask-image: linear-gradient(to bottom, black, transparent 78%); position: fixed; }
+      main { backdrop-filter: blur(24px); background: linear-gradient(145deg, rgba(15, 36, 64, .84), rgba(7, 20, 37, .72)); border: 1px solid rgba(125, 211, 252, .14); border-radius: 28px; box-shadow: 0 28px 90px rgba(0, 0, 0, .45), inset 0 1px rgba(255, 255, 255, .04); max-width: 540px; padding: 52px 58px 46px; position: relative; text-align: center; width: calc(100% - 48px); }
+      .brand { align-items: center; display: inline-flex; gap: 13px; margin-bottom: 38px; }
+      .mark { border-radius: 15px; box-shadow: 0 10px 30px rgba(15, 23, 42, .18); display: flex; height: 46px; justify-content: center; overflow: hidden; width: 46px; }
+      .mark img { display: block; height: 100%; width: 100%; }
+      .name { font-size: 18px; font-weight: 650; letter-spacing: .01em; }
+      .spinner { animation: spin 1.05s linear infinite; border: 3px solid rgba(125, 211, 252, .14); border-radius: 50%; border-top-color: #7dd3fc; height: 42px; margin: 0 auto 24px; position: relative; width: 42px; }
+      .spinner::after { border: 2px solid rgba(56, 189, 248, .14); border-radius: inherit; content: ""; inset: -9px; position: absolute; }
+      h1 { font-size: 24px; font-weight: 650; letter-spacing: -.02em; margin: 0 0 12px; }
+      p { color: #93a9c3; font-size: 14px; line-height: 1.7; margin: 0; }
+      .status { align-items: center; background: rgba(2, 132, 199, .08); border: 1px solid rgba(56, 189, 248, .12); border-radius: 12px; color: #b9ddf6; display: flex; font-size: 12px; gap: 10px; justify-content: center; margin-top: 30px; padding: 11px 14px; }
+      .dot { animation: pulse 1.4s ease-in-out infinite; background: #38bdf8; border-radius: 50%; box-shadow: 0 0 12px #38bdf8; height: 6px; width: 6px; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      @keyframes pulse { 50% { opacity: .35; transform: scale(.75); } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="brand"><div class="mark"><img src="./build/icon.svg" alt="" /></div><div class="name">DeepSeek Harness</div></div>
+      <div class="spinner"></div>
+      <h1>正在准备你的工作空间</h1>
+      <p>正在启动本地 Harness 服务并恢复会话数据。<br />首次运行可能需要几秒钟。</p>
+      <div class="status"><span class="dot"></span><span>安全连接到 127.0.0.1</span></div>
+    </main>
+  </body>
+</html>

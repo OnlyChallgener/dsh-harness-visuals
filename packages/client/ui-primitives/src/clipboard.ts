@@ -17,8 +17,17 @@ export async function writeClipboard(text: string): Promise<boolean> {
       await navigator.clipboard.writeText(text)
       return true
     } catch {
-      // Denied permissions / iframe policy — do not claim success.
-      return false
+      // A denied Web write can still use the desktop or legacy host path.
+    }
+  }
+  const desktop = (globalThis as typeof globalThis & {
+    desktop?: { copyText?: (value: string) => Promise<boolean> }
+  }).desktop
+  if (desktop?.copyText !== undefined) {
+    try {
+      if (await desktop.copyText(text)) return true
+    } catch {
+      // A stale bridge can still use the legacy host path below.
     }
   }
   // jsdom and older hosts: best-effort execCommand path when present.

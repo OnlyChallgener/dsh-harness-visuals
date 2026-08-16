@@ -13,6 +13,8 @@ import css from './MessageIconActions.module.css'
 export interface MessageIconActionsProps {
   /** Plain text the copy action writes. */
   text: string
+  /** Optional image-copy action used when the message contains an image. */
+  copyImage?: (() => Promise<boolean>) | undefined
   /** Unix epoch ms for the clock label; omitted for transient messages. */
   time?: number | undefined
   /** Turn wall time in ms, appended to the clock as `· Ran for 15s`; omitted when the turn's start is unknown. */
@@ -44,7 +46,7 @@ export interface MessageIconActionsProps {
  * @returns The actions row element.
  */
 export function MessageIconActions({
-  text, time, runMs, ttftMs, tokensPerSecond, clock, onBranch, branchUnavailable = false, className,
+  text, copyImage, time, runMs, ttftMs, tokensPerSecond, clock, onBranch, branchUnavailable = false, className,
   extraActions, t,
 }: MessageIconActionsProps) {
   const day = useCalendarDay()
@@ -64,7 +66,9 @@ export function MessageIconActions({
     if (copied || copyPending.current) return
     const epoch = copyEpoch.current
     copyPending.current = true
-    void writeClipboard(text).then((ok) => {
+    // Image messages copy their image bytes. Text-only messages copy text.
+    const copy = copyImage !== undefined ? copyImage : () => writeClipboard(text)
+    void copy().then((ok) => {
       if (epoch !== copyEpoch.current) return
       copyPending.current = false
       if (!ok) return
@@ -73,8 +77,13 @@ export function MessageIconActions({
         copyTimer.current = null
         setCopied(false)
       }, 1000)
+    }, () => {
+      // Image loading and browser clipboard writes are asynchronous host
+      // operations. A refusal must release the click gate, otherwise one
+      // transient failure makes this message's copy button permanently inert.
+      if (epoch === copyEpoch.current) copyPending.current = false
     })
-  }, [copied, text])
+  }, [copied, text, copyImage])
   // The dot is decorative and stays hidden, but its margins separate the
   // readings only on screen: without the flanking spaces a reader hears one
   // run-on string ("Ran for 13sTTFT 0.2s12 tok/s") instead of three facts.

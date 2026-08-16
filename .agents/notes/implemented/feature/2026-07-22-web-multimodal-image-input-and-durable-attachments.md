@@ -18,7 +18,7 @@ Peer products converge on an attachment rail above the editor, but their storage
 
 Pasted or dropped raster images are the Web composer's first consumer of a durable attachment capability. Unsent files remain temporary client-owned draft state. The host validates and durably commits every accepted user image before appending its message event. A provider adapter that produces structured image output must durably commit the output before appending its assistant block. Canonical user and assistant content contains only role-neutral `ImageBlock` references.
 
-Version one supports PNG, JPEG, WebP, and GIF paste and drag-and-drop, image-only or mixed prompts, historical user and assistant image rendering, and original-image preview on a single click (display and interaction specifics superseded in part by the [attachment-display alignment note](2026-08-11-web-attachment-display-alignment.md)). File picking, generic files, PDF, audio, video, image copying, and a custom context menu remain separate follow-ups.
+Version one supports PNG, JPEG, WebP, and GIF paste and drag-and-drop, image-only or mixed prompts, historical user and assistant image rendering, original-image preview on a single click, and image copy/save actions from the thumbnail and preview context menus (display and interaction specifics superseded in part by the [attachment-display alignment note](2026-08-11-web-attachment-display-alignment.md)). File picking, generic files, PDF, audio, and video remain separate follow-ups.
 
 ### Product behavior
 
@@ -29,7 +29,7 @@ Version one supports PNG, JPEG, WebP, and GIF paste and drag-and-drop, image-onl
 - A failed send restores the complete text and image draft without clobbering text or images added while the request was in flight. Removal, successful send, session-scope disposal, rendered-history disposal, and application disposal revoke the object URLs they own.
 - Historical user and assistant images use one `MessageImage` control. Inline images preserve intrinsic aspect ratio, do not upscale, and stay within a 240-by-240-pixel box.
 - Clicking a message image opens the stored original in a viewport-bounded modal. Escape, the close control, and backdrop activation close it and restore focus.
-- Version one does not override the browser context menu and provides no explicit image-copy action.
+- The image action menu copies image bytes rather than the message's text. Desktop copies normalize the payload to PNG and verify that the native clipboard contains an image; browser copies use the image Clipboard API.
 
 ### Storage lifecycle and ownership
 
@@ -159,11 +159,11 @@ Malformed base64, unsupported or mismatched media, truncated image payloads, exc
 | `packages/client/ui-conversation` | Per-session draft images, attachment rail, user and assistant image controls, and original preview. |
 | `packages/acp/acp` | Explicit fallback rendering for image blocks. |
 
-The attachment packages form the interface/implementation side of one capability seam. Composer behavior stays in the conversation object layer, provider conversion stays in adapters, and no change is required in `agent-loop`.
+The attachment packages form the interface/implementation side of one capability seam. Composer behavior stays in the conversation object layer, provider conversion stays in adapters, and no change is required in `agent-loop`. Desktop packaging overlays the workspace-built Host API proxy into the pinned runtime so Host admission checks and the published frontend use the same source build.
 
 ### Implementation
 
-The implemented slice includes the attachment seam, role-neutral image block, Pi-AI input conversion, DeepSeek rejection, durable host ordering, Web upload/read protocol, current image-limit enforcement, bounded Web request bodies, in-memory draft images, paste/drop rail, user and assistant history rendering, single-click preview, compaction handling, and keyless assembled Web coverage.
+The implemented slice includes the attachment seam, role-neutral image block, Pi-AI input conversion, DeepSeek rejection, durable host ordering, Web upload/read protocol, current image-limit enforcement, bounded Web request bodies, in-memory draft images, paste/drop rail, user and assistant history rendering, image action menus, single-click preview, compaction handling, and keyless assembled Web coverage. The Windows desktop package overlays the workspace-built Host API proxy after installing the pinned runtime dependencies.
 
 No compatibility shim is required for the pre-release prompt wire; all call sites and fixtures change with the introducing slice.
 
@@ -211,4 +211,4 @@ UI state can be stale and does not protect direct SDK, ACP, replay, or uncatalog
 - Original preview decodes more pixels than the inline control displays. Pixel limits, one clicked preview, and object-URL disposal bound but do not eliminate transient browser memory.
 - Capability metadata may be missing or stale. Host preflight improves feedback, while adapter enforcement remains authoritative.
 - A future output provider may require authenticated retrieval before an assistant image can complete, adding latency and a new failure point. Persist-before-event ordering favors replay integrity.
-- File picking, generic files/PDF, audio/video, durable draft staging, image copying, custom context menus, output-provider certification, and reference-aware garbage collection remain independent designs.
+- File picking, generic files/PDF, audio/video, durable draft staging, output-provider certification, and reference-aware garbage collection remain independent designs.

@@ -369,6 +369,37 @@ describe('TerminalBlock copy', () => {
 })
 
 describe('writeClipboard', () => {
+  it('prefers the browser clipboard and leaves the desktop bridge untouched', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    const copyText = vi.fn().mockResolvedValue(true)
+    const host = globalThis as typeof globalThis & { desktop?: { copyText: typeof copyText } }
+    host.desktop = { copyText }
+    try {
+      await expect(writeClipboard('payload')).resolves.toBe(true)
+      expect(writeText).toHaveBeenCalledWith('payload')
+      expect(copyText).not.toHaveBeenCalled()
+    } finally {
+      delete host.desktop
+    }
+  })
+
+  it('uses the verified desktop bridge when the browser clipboard rejects', async () => {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: vi.fn().mockRejectedValue(new Error('denied')) },
+    })
+    const copyText = vi.fn().mockResolvedValue(true)
+    const host = globalThis as typeof globalThis & { desktop?: { copyText: typeof copyText } }
+    host.desktop = { copyText }
+    try {
+      await expect(writeClipboard('payload')).resolves.toBe(true)
+      expect(copyText).toHaveBeenCalledWith('payload')
+    } finally {
+      delete host.desktop
+    }
+  })
+
   it('reports true after the async Clipboard API accepts the exact text', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })

@@ -1,0 +1,91 @@
+{
+  "name": "@deepseek-ai/dsh-desktop",
+  "version": "0.1.0-rc.7",
+  "private": true,
+  "type": "module",
+  "description": "DeepSeek Harness desktop application",
+  "main": "main.mjs",
+  "scripts": {
+    "build:workspace": "pnpm --dir ../.. run build",
+    "prepare:runtime": "npm install --omit=dev --prefix runtime && node scripts/prepare-runtime.mjs",
+    "prepare:electron": "install-electron",
+    "dev": "pnpm run prepare:runtime && pnpm run prepare:electron && electron .",
+    "start": "pnpm run prepare:runtime && pnpm run prepare:electron && electron .",
+    "test": "node --test test/runtime.test.mjs",
+    "dist:win": "pnpm run build:workspace && pnpm run dist:win:fast",
+    "dist:win:fast": "pnpm run prepare:runtime && electron-builder --win nsis --x64"
+  },
+  "devDependencies": {
+    "electron": "43.4.0",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "ai.deepseek.harness.desktop",
+    "productName": "DeepSeek Harness",
+    "directories": {
+      "buildResources": "build",
+      "output": "dist-win"
+    },
+    "compression": "normal",
+    "files": [
+      "*.html",
+      "*.cjs",
+      "*.mjs",
+      "build/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "runtime",
+        "to": "runtime",
+        "filter": [
+          "package.json",
+          "package-lock.json"
+        ]
+      },
+      {
+        "from": "runtime/node_modules",
+        "to": "runtime/node_modules",
+        "filter": [
+          "**/*",
+          "!**/*.map",
+          "!**/*.pdb",
+          "!**/*.ts",
+          "!**/*.mts",
+          "!**/*.cts",
+          "!**/*.md",
+          "!**/*.i18n.yaml",
+          "!**/test/**",
+          "!**/tests/**",
+          "!node-pty/prebuilds/darwin-*/**",
+          "!node-pty/prebuilds/win32-arm64/**",
+          "!node-pty/third_party/conpty/*/win10-arm64/**"
+        ]
+      },
+      {
+        "from": "runtime-launcher.cjs",
+        "to": "runtime-launcher.cjs"
+      },
+      {
+        "from": "windows-ocr.ps1",
+        "to": "windows-ocr.ps1"
+      }
+    ],
+    "afterPack": "scripts/verify-packaged-runtime.cjs",
+    "asarUnpack": [
+      "node_modules/**/*.node"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.svg"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "useZip": true,
+      "differentialPackage": false
+    }
+  }
+}

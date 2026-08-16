@@ -10,7 +10,7 @@ import type {
 } from '@deepseek-ai/dsh-client-runtime/client'
 import { JsonBlock, MessageText, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ChatNodeViewProps, ChatViewSlotProps } from '../contract/slots.ts'
-import { ImageGallery, type ImageLoader } from '@deepseek-ai/dsh-client-ui-attachment'
+import { ImageGallery, copyImage, type ImageLoader } from '@deepseek-ai/dsh-client-ui-attachment'
 import { messageImageLabels } from '../image-labels.ts'
 import { CompactionItem } from './CompactionItem.tsx'
 import { ContextInjectionRow } from './ContextInjectionRow.tsx'
@@ -181,8 +181,8 @@ function UserStyleBubble({
 }: {
   content: readonly unknown[]
   imageLoader: ImageLoader
-  /** Optional IconActions (or similar) below the bubble; receives the joined text. */
-  actions?: (text: string) => ReactNode
+  /** Optional IconActions (or similar) below the bubble; receives the joined text and image-copy callback. */
+  actions?: (text: string, copyImageAction?: () => Promise<boolean>) => ReactNode
   /** Whether this is the Host-authoritative pre-admission steering projection. */
   pending?: boolean
   t: ChatViewSlotProps['t']
@@ -190,6 +190,16 @@ function UserStyleBubble({
   const { text, images, rest } = contentParts(content)
   const truncated = (total: number): string => t('json.truncated', { total })
   const showBubble = text !== '' || rest.length > 0
+  // An image message copies the first image. imageLoader resolves the
+  // session-authorized URL, which copyImage reads back into bytes for the host
+  // clipboard; text-only messages keep the ordinary text action.
+  const firstImage = images[0]
+  const copyImageAction = firstImage === undefined
+    ? undefined
+    : async (): Promise<boolean> => {
+      const src = await imageLoader(firstImage.attachment)
+      return copyImage(src)
+    }
   return (
     <div className={css.userRow} data-pending-steering={pending || undefined} data-time-hover-root>
       <div className={css.userStack}>
@@ -199,7 +209,7 @@ function UserStyleBubble({
           {rest.map((block, i) => <JsonBlock key={i} label={t('message.extraBlock')} payload={block} truncatedLabel={truncated} />)}
         </div>}
       </div>
-      {actions?.(text)}
+      {actions?.(text, copyImageAction)}
     </div>
   )
 }
@@ -222,9 +232,10 @@ export function PendingSteeringBubble({ content, loadImage, t }: {
       imageLoader={imageLoader}
       pending
       t={t}
-      actions={text => (
+      actions={(_text, copyImageAction) => (
         <MessageIconActions
-          text={text}
+          text={_text}
+          copyImage={copyImageAction}
           clock="start"
           className={css.actions}
           t={t}
@@ -244,9 +255,10 @@ export const UserMessageNodeView = memo(function UserMessageNodeView({
       content={data.content}
       imageLoader={loadImage}
       t={t}
-      actions={text => (
+      actions={(_text, copyImageAction) => (
         <MessageIconActions
-          text={text}
+          text={_text}
+          copyImage={copyImageAction}
           time={data.time}
           clock="start"
           className={css.actions}

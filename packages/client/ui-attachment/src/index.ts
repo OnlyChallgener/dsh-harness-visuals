@@ -11,6 +11,7 @@ export type { AttachmentRailItem, AttachmentRailLabels } from './AttachmentRail.
 export { DropOverlay } from './DropOverlay.tsx'
 export type { DropOverlayLabels } from './DropOverlay.tsx'
 export { ImageLightbox } from './ImageLightbox.tsx'
-export type { ImageLightboxLabels } from './ImageLightbox.tsx'
+export type { ImageActionLabels, ImageLightboxLabels } from './ImageLightbox.tsx'
 export { ImageGallery, MessageImage } from './MessageImage.tsx'
 export type { ImageLoader, MessageImageLabels } from './MessageImage.tsx'
+export { copyImage } from './image-actions.ts'

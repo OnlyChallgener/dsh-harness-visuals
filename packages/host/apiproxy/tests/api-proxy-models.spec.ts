@@ -196,6 +196,39 @@ describe('Web session model selection', () => {
     await ctx.fiber.dispose()
   })
 
+  it('rejects an image before persistence and keeps the session usable for text', async () => {
+    const { ctx, agent, sessionId } = await harness()
+    registerTextOnly(ctx)
+    const followup = vi.fn()
+    Object.assign(agent, { followup })
+    const api = createApiProxy(ctx, {
+      defaultModelSelection: () => ({ provider: 'text-only', model: 'plain' }),
+      cwd: '/tmp',
+    })
+
+    const image = await api.sessions.prompt(request({
+      sessionId,
+      mode: 'queue' as const,
+      content: [{ type: 'image' as const, mediaType: 'image/png' as const, data: 'AQ==' }],
+    }))
+    expect(image.result).toMatchObject({
+      ok: false,
+      error: { code: 'attachment-error', details: { reason: 'MODEL_DOES_NOT_SUPPORT_IMAGES' } },
+    })
+    expect(followup).not.toHaveBeenCalled()
+
+    const text = await api.sessions.prompt(request({
+      sessionId,
+      mode: 'queue' as const,
+      content: [{ type: 'text' as const, text: '继续文字对话' }],
+    }))
+    expect(text.result).toEqual({ ok: true, value: { accepted: true } })
+    expect((followup.mock.calls[0]?.[0] as UserMessage).content).toEqual([
+      { type: 'text', text: '继续文字对话' },
+    ])
+    await ctx.fiber.dispose()
+  })
+
   it('refuses a text-only selection while durable or pending image content remains visible', async () => {
     const { ctx, agent, sessionId } = await harness()
     registerTextOnly(ctx)

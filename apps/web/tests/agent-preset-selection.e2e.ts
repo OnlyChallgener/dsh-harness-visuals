@@ -3,11 +3,9 @@
 // boots with an empty roster and no preset surface at all; this is the one
 // lane that mounts the SHIPPED presets and puts them in front of a browser.
 //
-// Two surfaces, one host rule: a session's composition is fixed when the
-// session starts. Before that, the new-session chip stages the choice beside
-// the workspace picker — the only screen where it still works. After it, the
-// session header names what the session runs and offers no control at all,
-// because the host answers `agent-preset-locked` to anything else.
+// Two surfaces, one host rule: the new-session chip stages the choice beside
+// the workspace picker, while an existing session's header names its current
+// composition and keeps the same roster available for the next turn.
 //
 // Zero model calls: no replay fixture mounts, so a stray stream fails loud.
 import { fileURLToPath } from 'node:url'
@@ -70,7 +68,7 @@ function seedLog(): string {
   const at = (index: number, event: Record<string, unknown>): string =>
     JSON.stringify({ ...event, seq: index, time: time + index })
   return [
-    JSON.stringify({ type: 'session', version: 0, id: '{{sessionId}}', createdAt: time, cwd: '{{cwd}}/workspace' }),
+    JSON.stringify({ type: 'session', version: 0, id: '{{sessionId}}', createdAt: time, cwd: '{{cwd}}' }),
     at(0, { type: 'turn/start', data: { turn: 1, trigger: { kind: 'message', source: { kind: 'user', rpcId: 'seed' } } } }),
     at(1, {
       type: 'user/message',
@@ -175,9 +173,9 @@ describe('web e2e: agent-preset selection', () => {
     scaffold = await launchWebScaffold({
       agentPresets: { roots: [{ path: SHIPPED_PRESETS, trust: 'system' }], default: 'standard' },
     })
-    // A resumed session runs what it was created with; seeding one that
-    // records `minimal` is what makes the header label a claim about the
-    // session rather than an echo of the current default.
+    // A resumed session starts with what it was created with; seeding one that
+    // records `minimal` makes the header label a claim about the session
+    // rather than an echo of the current default.
     const seededId = await seedSession(scaffold, seedLog(), SEED_ID, 'minimal')
     await seedSubagent(scaffold, seededId)
     await seedWorkspaceSkill(scaffold.workspaceCwd)
@@ -284,9 +282,9 @@ describe('web e2e: agent-preset selection', () => {
     expect(snapshot).toContain('button "1 subagent"')
     expect(snapshot.indexOf('Minimal mode')).toBeLessThan(snapshot.indexOf('button "1 subagent"'))
     expect(snapshot.indexOf('button "1 subagent"')).toBeLessThan(snapshot.indexOf('button "Session log"'))
-    // Static chrome, not a control: the header can only report a composition
-    // the host would refuse to change.
-    expect(snapshot).not.toContain('button "Minimal mode"')
+    // The current composition is also the header control for switching the
+    // session before its next turn.
+    expect(snapshot).toContain('button "Minimal mode"')
   })
 
   it('drove every surface without a page error or a stream warning', () => {
