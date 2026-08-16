@@ -16,6 +16,11 @@ const PACKAGE_NAME_PATTERN = /^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a
 const REGISTRY_SPEC_PATTERN = /^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)(?:@[a-z0-9][a-z0-9._+-]*)?$/iu
 const GITHUB_SPEC_PATTERN = /^github:[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*(?:#[a-z0-9][a-z0-9._\/-]*)?$/iu
 const SEMVER_PATTERN = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/u
+const INBOX_PROFILE_DEPENDENCIES = new Set([
+  '@deepseek-ai/dsh-base',
+  '@deepseek-ai/dsh-web-app',
+  '@deepseek-ai/dsh-headless',
+])
 
 let mutationTail = Promise.resolve()
 const pendingBuildApprovals = new Map()
@@ -326,6 +331,39 @@ export async function readInstalledPluginVersion(dshHome, name) {
   }
 }
 
+/** Read the locally installed direct plugin dependencies without pnpm, dsh CLI, or network access. */
+export async function readLocalInstalledPlugins(dshHome) {
+  const file = webProfileManifestPath(dshHome)
+  if (file === undefined) return []
+  let manifest
+  try {
+    manifest = JSON.parse(await readFile(file, 'utf8'))
+  } catch {
+    return []
+  }
+  if (manifest === null || typeof manifest !== 'object' || Array.isArray(manifest)) return []
+  const dependencies = manifest.dependencies
+  if (dependencies === null || typeof dependencies !== 'object' || Array.isArray(dependencies)) return []
+
+  const rows = await Promise.all(Object.entries(dependencies).map(async ([name, sourceSpec]) => {
+    if (typeof sourceSpec !== 'string' || !PACKAGE_NAME_PATTERN.test(name) || INBOX_PROFILE_DEPENDENCIES.has(name)) return undefined
+    const manifestPath = webProfilePackageManifestPath(dshHome, name)
+    if (manifestPath === undefined) return undefined
+    const version = await readInstalledPluginVersion(dshHome, name)
+    if (version === undefined) return undefined
+    return {
+      name,
+      version,
+      path: dirname(manifestPath),
+      sourceSpec,
+    }
+  }))
+
+  return rows
+    .filter(row => row !== undefined)
+    .sort((left, right) => left.name.localeCompare(right.name))
+}
+
 /** Verify exact npm installs/updates against the package that is really on disk. */
 export async function verifyExactPluginInstall(dshHome, value) {
   const expected = exactRegistryPluginVersion(value)
@@ -579,10 +617,13 @@ export async function inspectPluginEnvironment({ nodePath, dshHome }) {
   }
 }
 
-/** List installed dependencies, local details, source evidence, and bounded update status. */
+/**
+ * List installed plugins from the local profile first. Registry metadata is a
+ * best-effort enrichment only: broken pnpm workspace YAML, offline networks,
+ * or registry failures must never hide the packages already present on disk.
+ */
 export async function listInstalledPlugins(options, { fetchImpl = globalThis.fetch } = {}) {
-  const { stdout } = await runPluginCommand({ ...options, args: ['list', '--depth', '0', '--json'] })
-  const plugins = parsePluginList(stdout)
+  const plugins = await readLocalInstalledPlugins(options.dshHome)
   return mapWithConcurrency(plugins, MARKETPLACE_METADATA_CONCURRENCY, plugin => enrichInstalledPlugin(plugin, fetchImpl))
 }
 

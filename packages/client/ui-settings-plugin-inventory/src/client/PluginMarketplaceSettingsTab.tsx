@@ -167,7 +167,6 @@ function InstalledPlugin({
         <button
           className={css.secondaryButton}
           type="button"
-          disabled={disabled}
           aria-expanded={expanded}
           onClick={() => { setExpanded(current => !current) }}
         >
@@ -205,46 +204,44 @@ export function PluginMarketplaceSettingsTab({ api, t }: PluginMarketplaceSettin
   const [spec, setSpec] = useState('')
   const [operation, setOperation] = useState<string>()
   const [operationError, setOperationError] = useState<string>()
+  const [refreshError, setRefreshError] = useState(false)
   const [restartRequired, setRestartRequired] = useState(false)
 
   const load = useCallback(async (): Promise<void> => {
     if (api === undefined) return
-    setPhase('loading')
+    setPhase(current => current === 'ready' ? 'ready' : 'loading')
     setOperationError(undefined)
-    try {
-      const nextEnvironment = await api.environment()
-      setEnvironment(nextEnvironment)
-      if (!nextEnvironment.pnpmAvailable) {
-        setPlugins([])
-        setPhase('ready')
-        return
-      }
-      setPlugins(await api.list())
+    setRefreshError(false)
+    const [environmentResult, listResult] = await Promise.allSettled([
+      api.environment(),
+      api.list(),
+    ])
+    if (environmentResult.status === 'fulfilled') setEnvironment(environmentResult.value)
+    if (listResult.status === 'fulfilled') {
+      setPlugins(listResult.value)
       setPhase('ready')
-    } catch {
-      setPhase('error')
+      return
     }
+    setRefreshError(true)
+    setPhase(current => current === 'ready' ? 'ready' : 'error')
   }, [api])
 
   useEffect(() => {
     let current = true
     if (api === undefined) return () => { current = false }
     void (async () => {
-      try {
-        const nextEnvironment = await api.environment()
-        if (!current) return
-        setEnvironment(nextEnvironment)
-        if (!nextEnvironment.pnpmAvailable) {
-          setPlugins([])
-          setPhase('ready')
-          return
-        }
-        const nextPlugins = await api.list()
-        if (!current) return
-        setPlugins(nextPlugins)
+      const [environmentResult, listResult] = await Promise.allSettled([
+        api.environment(),
+        api.list(),
+      ])
+      if (!current) return
+      if (environmentResult.status === 'fulfilled') setEnvironment(environmentResult.value)
+      if (listResult.status === 'fulfilled') {
+        setPlugins(listResult.value)
+        setRefreshError(false)
         setPhase('ready')
-      } catch {
-        if (current) setPhase('error')
+      } else {
+        setPhase('error')
       }
     })()
     return () => { current = false }
@@ -374,8 +371,14 @@ export function PluginMarketplaceSettingsTab({ api, t }: PluginMarketplaceSettin
           <button type="button" onClick={() => { void load() }}>{t('retry')}</button>
         </div>
       ) : null}
+      {phase === 'ready' && refreshError ? (
+        <div className={css.warning} role="status">
+          <span>{t('marketplaceLoadError')}</span>
+          <button type="button" onClick={() => { void load() }}>{t('retry')}</button>
+        </div>
+      ) : null}
 
-      {phase === 'ready' && !pnpmReady ? (
+      {phase === 'ready' && environment !== undefined && !pnpmReady ? (
         <div className={css.warning} role="status">
           <strong>{t('marketplacePnpmTitle')}</strong>
           <span>{t('marketplacePnpmMissing')}</span>
@@ -398,20 +401,20 @@ export function PluginMarketplaceSettingsTab({ api, t }: PluginMarketplaceSettin
             <button
               className={css.secondaryButton}
               type="button"
-              disabled={!pnpmReady || operation !== undefined}
+              disabled={operation !== undefined}
               onClick={() => { void load() }}
             >
               {t('marketplaceRefresh')}
             </button>
           </div>
-          {pnpmReady && plugins.length === 0 ? <p className={css.status}>{t('marketplaceEmpty')}</p> : null}
-          {pnpmReady && plugins.length > 0 ? (
+          {plugins.length === 0 ? <p className={css.status}>{t('marketplaceEmpty')}</p> : null}
+          {plugins.length > 0 ? (
             <ul className={css.pluginList}>
               {plugins.map(plugin => (
                 <InstalledPlugin
                   key={plugin.name}
                   plugin={plugin}
-                  disabled={operation !== undefined}
+                  disabled={!pnpmReady || operation !== undefined}
                   operation={operation}
                   update={update}
                   remove={remove}

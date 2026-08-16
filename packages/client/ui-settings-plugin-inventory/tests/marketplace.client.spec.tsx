@@ -158,14 +158,27 @@ describe('PluginMarketplaceSettingsTab', () => {
     expect(screen.getByText(en.marketplaceRestartTitle)).toBeTruthy()
   })
 
-  it('disables mutations when pnpm is unavailable', async () => {
+  it('keeps local installed plugins visible while pnpm mutations are unavailable', async () => {
     const bridge = createApi()
     bridge.environment.mockResolvedValue({ nodeVersion: 'v24.1.0', pnpmAvailable: false, profile: 'web' })
     render(<PluginMarketplaceSettingsTab {...props(bridge)} />)
 
+    expect(await screen.findByText('@fixture/plugin')).toBeTruthy()
     expect(await screen.findByText(en.marketplacePnpmTitle)).toBeTruthy()
-    expect(bridge.list).not.toHaveBeenCalled()
+    expect(bridge.list).toHaveBeenCalledOnce()
     fireEvent.click(screen.getByRole('tab', { name: en.marketplaceRecommended }))
     expect((screen.getByLabelText(en.marketplaceInstallTitle) as HTMLInputElement).disabled).toBe(true)
+  })
+
+  it('keeps the last installed snapshot visible when a refresh fails', async () => {
+    const bridge = createApi()
+    render(<PluginMarketplaceSettingsTab {...props(bridge)} />)
+    await screen.findByText('@fixture/plugin')
+
+    bridge.list.mockRejectedValueOnce(new Error('offline'))
+    fireEvent.click(screen.getByRole('button', { name: en.marketplaceRefresh }))
+
+    expect(await screen.findByText(en.marketplaceLoadError)).toBeTruthy()
+    expect(screen.getByText('@fixture/plugin')).toBeTruthy()
   })
 })
