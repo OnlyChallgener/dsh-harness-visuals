@@ -8,14 +8,17 @@ const PLUGIN_COMMAND_TIMEOUT_MS = 5 * 60 * 1000
 const PLUGIN_OUTPUT_LIMIT_BYTES = 4 * 1024 * 1024
 const PLUGIN_SPEC_MAX_LENGTH = 512
 const PACKAGE_NAME_PATTERN = /^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)$/iu
+const REGISTRY_SPEC_PATTERN = /^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)(?:@[a-z0-9][a-z0-9._-]*)?$/iu
+const GITHUB_SPEC_PATTERN = /^github:[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*(?:#[a-z0-9][a-z0-9._\/-]*)?$/iu
 
 let mutationTail = Promise.resolve()
 
 /**
  * Validates one package spec before it reaches the official `dsh plugin`
- * forwarder. The backend deliberately accepts registry, git, tarball and path
- * specs, but never an option-shaped or multiline value that could be mistaken
- * for pnpm control syntax.
+ * forwarder. Marketplace installs intentionally start with registry packages
+ * (optionally pinned to an exact version/tag) and GitHub shorthand. Arbitrary
+ * shell/path/tarball specs stay outside this UI boundary because the official
+ * Windows plugin forwarder must invoke pnpm through its command shim.
  * @param {unknown} value - Candidate package spec.
  * @returns {string} The trimmed safe spec.
  */
@@ -25,8 +28,8 @@ export function pluginSpec(value) {
   if (spec.length === 0 || spec.length > PLUGIN_SPEC_MAX_LENGTH) {
     throw new Error('Plugin spec is empty or too long.')
   }
-  if (spec.startsWith('-') || /[\r\n\0]/u.test(spec)) {
-    throw new Error('Plugin spec contains unsupported command syntax.')
+  if (!REGISTRY_SPEC_PATTERN.test(spec) && !GITHUB_SPEC_PATTERN.test(spec)) {
+    throw new Error('Plugin spec must be an npm package/version or github:owner/repo reference.')
   }
   return spec
 }
@@ -39,8 +42,11 @@ export function pluginSpec(value) {
  * @returns {string} The safe package name.
  */
 export function pluginPackageName(value) {
-  const name = pluginSpec(value)
-  if (!PACKAGE_NAME_PATTERN.test(name)) throw new Error('Plugin package name is invalid.')
+  if (typeof value !== 'string') throw new TypeError('Plugin package name must be a string.')
+  const name = value.trim()
+  if (name.length === 0 || name.length > PLUGIN_SPEC_MAX_LENGTH || !PACKAGE_NAME_PATTERN.test(name)) {
+    throw new Error('Plugin package name is invalid.')
+  }
   return name
 }
 
