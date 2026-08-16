@@ -48,12 +48,19 @@ export function AgentPresetLabel({
   const options = useAgentPresets(state => state.options)
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [switchError, setSwitchError] = useState<string | undefined>()
 
   useEffect(() => {
     // Deployments that compose no presets never label anything, so the roster
     // is only worth a request once a session reports one.
     if (preset !== undefined) void load()
   }, [preset, load])
+
+  useEffect(() => {
+    // A failure belongs to the exact session/preset attempt that produced it;
+    // never carry that diagnostic onto another session or a later committed switch.
+    setSwitchError(undefined)
+  }, [sessionId, preset])
 
   if (preset === undefined) return null
 
@@ -81,8 +88,13 @@ export function AgentPresetLabel({
       onSelect={(id) => {
         setOpen(false)
         if (id === preset || busy) return
+        setSwitchError(undefined)
         setBusy(true)
-        void select(sessionId, id).finally(() => { setBusy(false) })
+        void select(sessionId, id)
+          .catch((error: unknown) => {
+            setSwitchError(error instanceof Error ? error.message : String(error))
+          })
+          .finally(() => { setBusy(false) })
       }}
       align="start"
       portal
@@ -92,7 +104,7 @@ export function AgentPresetLabel({
           className={css.label}
           aria-haspopup="menu"
           aria-expanded={open}
-          title={text?.description ?? t('headerHint')}
+          title={switchError ?? text?.description ?? t('headerHint')}
           disabled={busy}
           onClick={() => { setOpen(value => !value) }}
         >
