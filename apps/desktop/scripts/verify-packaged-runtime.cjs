@@ -35,6 +35,15 @@ module.exports = async function verifyPackagedRuntime(context) {
     throw new Error(`Packaged Harness runtime entry is missing: ${entry}`)
   }
 
+  const pnpmEntry = path.join(runtimeRoot, 'node_modules', 'pnpm', 'bin', 'pnpm.cjs')
+  const pnpmLauncher = path.join(runtimeRoot, 'bin', process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm')
+  try {
+    await access(pnpmEntry)
+    await access(pnpmLauncher)
+  } catch {
+    throw new Error(`Packaged plugin package-manager runtime is incomplete: ${pnpmEntry}`)
+  }
+
   const runtimePackage = path.join(runtimeRoot, 'package.json')
   const runtimeRequire = createRequire(runtimePackage)
   const webAppPackage = runtimeRequire.resolve('@deepseek-ai/dsh-web-app/package.json')
