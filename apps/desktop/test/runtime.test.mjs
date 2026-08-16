@@ -6,6 +6,7 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { writeWindowsClipboardText } from '../clipboard.mjs'
+import { parsePluginList, pluginPackageName, pluginSpec } from '../plugin-marketplace.mjs'
 import {
   harnessEnvironment,
   isSupportedNodeVersion,
@@ -75,6 +76,27 @@ test('passes Harness settings without leaking unrelated secrets', () => {
     DSH_HOME: 'C:\\Harness',
     ELECTRON_RUN_AS_NODE: '1',
   })
+})
+
+test('validates marketplace package specs without exposing pnpm options', () => {
+  assert.equal(pluginSpec('@scope/plugin@1.2.3'), '@scope/plugin@1.2.3')
+  assert.equal(pluginSpec('github:owner/plugin'), 'github:owner/plugin')
+  assert.equal(pluginPackageName('@scope/plugin'), '@scope/plugin')
+  assert.throws(() => pluginSpec('--global'), /unsupported command syntax/)
+  assert.throws(() => pluginSpec('plugin\nremove other'), /unsupported command syntax/)
+  assert.throws(() => pluginPackageName('plugin@1.2.3'), /package name is invalid/)
+})
+
+test('normalizes pnpm plugin-list output to stable marketplace rows', () => {
+  assert.deepEqual(parsePluginList(JSON.stringify([{
+    dependencies: {
+      'z-plugin': { version: '2.0.0', path: 'C:/profile/node_modules/z-plugin' },
+      '@scope/a-plugin': { version: '1.0.0' },
+    },
+  }])), [
+    { name: '@scope/a-plugin', version: '1.0.0' },
+    { name: 'z-plugin', version: '2.0.0', path: 'C:/profile/node_modules/z-plugin' },
+  ])
 })
 
 test('packages the embedded runtime dependencies and verifies their entry point', () => {
