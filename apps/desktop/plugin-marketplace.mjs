@@ -12,7 +12,7 @@ const MARKETPLACE_METADATA_TIMEOUT_MS = 4_000
 const MARKETPLACE_METADATA_CONCURRENCY = 4
 const MANAGED_PNPM_VERSION = '11.7.0'
 const PACKAGE_NAME_PATTERN = /^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)$/iu
-const REGISTRY_SPEC_PATTERN = /^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)(?:@[a-z0-9][a-z0-9._-]*)?$/iu
+const REGISTRY_SPEC_PATTERN = /^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)(?:@[a-z0-9][a-z0-9._+-]*)?$/iu
 const GITHUB_SPEC_PATTERN = /^github:[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*(?:#[a-z0-9][a-z0-9._\/-]*)?$/iu
 const SEMVER_PATTERN = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/u
 
@@ -39,6 +39,18 @@ export function pluginPackageName(value) {
     throw new Error('Plugin package name is invalid.')
   }
   return name
+}
+
+/** Extract an exact npm semantic-version target. Tags and GitHub sources are intentionally not exact. */
+export function exactRegistryPluginVersion(value) {
+  const spec = pluginSpec(value)
+  if (GITHUB_SPEC_PATTERN.test(spec)) return undefined
+  const separator = spec.lastIndexOf('@')
+  if (separator <= 0) return undefined
+  const name = spec.slice(0, separator)
+  const version = spec.slice(separator + 1)
+  if (!PACKAGE_NAME_PATTERN.test(name) || !SEMVER_PATTERN.test(version)) return undefined
+  return { name, version }
 }
 
 /** Parse `pnpm list --depth 0 --json` into a bounded internal dependency record. */
@@ -298,6 +310,38 @@ function webProfileManifestPath(dshHome) {
   return join(dshHome, 'profiles', 'web', 'package.json')
 }
 
+function webProfilePackageManifestPath(dshHome, name) {
+  if (typeof dshHome !== 'string' || dshHome.length === 0) return undefined
+  const safeName = pluginPackageName(name)
+  return join(dshHome, 'profiles', 'web', 'node_modules', ...safeName.split('/'), 'package.json')
+}
+
+/** Read the package version that actually landed in the Web profile node_modules tree. */
+export async function readInstalledPluginVersion(dshHome, name) {
+  const file = webProfilePackageManifestPath(dshHome, name)
+  if (file === undefined) return undefined
+  try {
+    const manifest = JSON.parse(await readFile(file, 'utf8'))
+    return typeof manifest?.version === 'string' ? manifest.version : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** Verify exact npm installs/updates against the package that is really on disk. */
+export async function verifyExactPluginInstall(dshHome, value) {
+  const expected = exactRegistryPluginVersion(value)
+  if (expected === undefined) return undefined
+  const installedVersion = await readInstalledPluginVersion(dshHome, expected.name)
+  if (installedVersion === undefined) {
+    throw new Error(`Plugin operation did not apply ${expected.name}@${expected.version}: installed package is missing after pnpm completed.`)
+  }
+  if (comparePluginVersions(installedVersion, expected.version) !== 0) {
+    throw new Error(`Plugin operation did not apply requested version for ${expected.name}: expected ${expected.version}, found ${installedVersion}.`)
+  }
+  return { ...expected, installedVersion }
+}
+
 /** Snapshot only the profile dependency map before pnpm gets a chance to mutate it. */
 export async function readProfileDependencySnapshot(dshHome) {
   const file = webProfileManifestPath(dshHome)
@@ -347,6 +391,15 @@ export async function restoreProfileDependencySnapshot(dshHome, snapshot) {
   return [...touched].sort()
 }
 
+function commandFailureDetail(error) {
+  const outputs = [error?.stderr, error?.stdout]
+    .filter(value => typeof value === 'string' && value.trim().length > 0)
+    .map(value => value.trim())
+  const unique = [...new Set(outputs)]
+  const detail = unique.join('\n') || (error instanceof Error ? error.message : String(error))
+  return detail.length > 8_000 ? detail.slice(-8_000) : detail
+}
+
 /** Run one official profile-plugin command without a shell or string interpolation. */
 async function runPluginCommand({ nodePath, dshHome, runtimeRoot, workingDirectory, args }) {
   const binPath = dshBinPath(runtimeRoot)
@@ -363,10 +416,7 @@ async function runPluginCommand({ nodePath, dshHome, runtimeRoot, workingDirecto
       windowsHide: true,
     })
   } catch (error) {
-    const stdout = typeof error?.stdout === 'string' ? error.stdout.trim() : ''
-    const stderr = typeof error?.stderr === 'string' ? error.stderr.trim() : ''
-    const detail = stderr || stdout || (error instanceof Error ? error.message : String(error))
-    throw new Error(`Plugin operation failed: ${detail}`)
+    throw new Error(`Plugin operation failed: ${commandFailureDetail(error)}`)
   }
 }
 
@@ -396,10 +446,12 @@ function serializeMutation(operation) {
   return run
 }
 
-async function runProfileMutation(options, args) {
+async function runProfileMutation(options, args, { verify } = {}) {
   const before = await readProfileDependencySnapshot(options.dshHome)
   try {
-    return await runPluginCommand({ ...options, args })
+    const result = await runPluginCommand({ ...options, args })
+    if (typeof verify === 'function') await verify()
+    return result
   } catch (error) {
     let rolledBack = []
     try {
@@ -417,8 +469,17 @@ async function runProfileMutation(options, args) {
 export function installPlugin(options, value) {
   const spec = pluginSpec(value)
   return serializeMutation(async () => {
-    await runProfileMutation(options, ['add', spec])
-    return { installed: spec, restartRequired: true }
+    let verification
+    await runProfileMutation(options, ['add', spec], {
+      verify: async () => {
+        verification = await verifyExactPluginInstall(options.dshHome, spec)
+      },
+    })
+    return {
+      installed: spec,
+      ...(verification === undefined ? {} : { installedVersion: verification.installedVersion }),
+      restartRequired: true,
+    }
   })
 }
 

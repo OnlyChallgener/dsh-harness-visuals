@@ -67,6 +67,13 @@ function updateLocale(status: MarketplaceUpdateStatus | undefined): PluginInvent
   return 'marketplaceUpdateManual'
 }
 
+function operationErrorDetail(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  const normalized = raw.replace(/\s+/gu, ' ').trim()
+  if (normalized.length === 0) return 'Unknown plugin operation error.'
+  return normalized.length > 1_200 ? `${normalized.slice(0, 1_197)}...` : normalized
+}
+
 /** Render one installed package row with local details and update evidence. */
 function InstalledPlugin({
   plugin,
@@ -182,13 +189,13 @@ export function PluginMarketplaceSettingsTab({ api, t }: PluginMarketplaceSettin
   const [plugins, setPlugins] = useState<MarketplacePlugin[]>([])
   const [spec, setSpec] = useState('')
   const [operation, setOperation] = useState<string>()
-  const [operationFailed, setOperationFailed] = useState(false)
+  const [operationError, setOperationError] = useState<string>()
   const [restartRequired, setRestartRequired] = useState(false)
 
   const load = useCallback(async (): Promise<void> => {
     if (api === undefined) return
     setPhase('loading')
-    setOperationFailed(false)
+    setOperationError(undefined)
     try {
       const nextEnvironment = await api.environment()
       setEnvironment(nextEnvironment)
@@ -233,14 +240,14 @@ export function PluginMarketplaceSettingsTab({ api, t }: PluginMarketplaceSettin
     const value = spec.trim()
     if (api === undefined || environment?.pnpmAvailable !== true || value.length === 0 || operation !== undefined) return
     setOperation('install')
-    setOperationFailed(false)
+    setOperationError(undefined)
     try {
       const result = await api.install(value)
       setRestartRequired(current => current || result.restartRequired)
       setSpec('')
       try { setPlugins(await api.list()) } catch { /* install already succeeded; keep the existing snapshot */ }
-    } catch {
-      setOperationFailed(true)
+    } catch (error) {
+      setOperationError(operationErrorDetail(error))
     } finally {
       setOperation(undefined)
     }
@@ -249,39 +256,45 @@ export function PluginMarketplaceSettingsTab({ api, t }: PluginMarketplaceSettin
   const installCatalog = (value: string, id: string): void => {
     if (api === undefined || environment?.pnpmAvailable !== true || operation !== undefined) return
     setOperation(`catalog:${id}`)
-    setOperationFailed(false)
+    setOperationError(undefined)
     void api.install(value).then(
       async (result) => {
         setRestartRequired(current => current || result.restartRequired)
         try { setPlugins(await api.list()) } catch { /* catalog install succeeded; keep the existing snapshot */ }
       },
-      () => { setOperationFailed(true) },
+      (error) => { setOperationError(operationErrorDetail(error)) },
     ).finally(() => { setOperation(undefined) })
   }
 
   const update = (plugin: MarketplacePlugin): void => {
     if (api === undefined || environment?.pnpmAvailable !== true || operation !== undefined || plugin.updateSpec === undefined) return
     setOperation(`update:${plugin.name}`)
-    setOperationFailed(false)
+    setOperationError(undefined)
     void api.install(plugin.updateSpec).then(
       async (result) => {
         setRestartRequired(current => current || result.restartRequired)
-        try { setPlugins(await api.list()) } catch { /* update succeeded; preserve the prior detail snapshot */ }
+        const appliedVersion = plugin.latestVersion
+        if (appliedVersion !== undefined) {
+          setPlugins(current => current.map(item => item.name === plugin.name
+            ? { ...item, version: appliedVersion, latestVersion: appliedVersion, updateAvailable: false, updateStatus: 'current' }
+            : item))
+        }
+        try { setPlugins(await api.list()) } catch { /* exact update was verified by Desktop; preserve optimistic version */ }
       },
-      () => { setOperationFailed(true) },
+      (error) => { setOperationError(operationErrorDetail(error)) },
     ).finally(() => { setOperation(undefined) })
   }
 
   const remove = (name: string): void => {
     if (api === undefined || environment?.pnpmAvailable !== true || operation !== undefined) return
     setOperation(`remove:${name}`)
-    setOperationFailed(false)
+    setOperationError(undefined)
     void api.remove(name).then(
       (result) => {
         setRestartRequired(current => current || result.restartRequired)
         setPlugins(current => current.filter(plugin => plugin.name !== name))
       },
-      () => { setOperationFailed(true) },
+      (error) => { setOperationError(operationErrorDetail(error)) },
     ).finally(() => { setOperation(undefined) })
   }
 
@@ -351,7 +364,11 @@ export function PluginMarketplaceSettingsTab({ api, t }: PluginMarketplaceSettin
         </div>
       ) : null}
 
-      {operationFailed ? <p className={css.operationError} role="alert">{t('marketplaceOperationError')}</p> : null}
+      {operationError !== undefined ? (
+        <p className={css.operationError} role="alert">
+          {t('marketplaceOperationError')} {' '}{operationError}
+        </p>
+      ) : null}
 
       {phase === 'ready' && view === 'installed' ? (
         <div className={css.marketBody}>
