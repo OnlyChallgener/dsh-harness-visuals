@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "DeepSeek Harness desktop application",
-  "main": "main.mjs",
+  "main": "main-loader.mjs",
   "scripts": {
     "build:workspace": "pnpm --dir ../.. run build",
     "prepare:runtime": "npm install --omit=dev --prefix runtime && node scripts/prepare-runtime.mjs",
