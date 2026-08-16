@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
-import { readFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { delimiter, dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { checkNodeRuntime, dshBinPath, harnessEnvironment } from './runtime.mjs'
 
@@ -10,6 +10,7 @@ const PLUGIN_OUTPUT_LIMIT_BYTES = 4 * 1024 * 1024
 const PLUGIN_SPEC_MAX_LENGTH = 512
 const MARKETPLACE_METADATA_TIMEOUT_MS = 4_000
 const MARKETPLACE_METADATA_CONCURRENCY = 4
+const MANAGED_PNPM_VERSION = '11.7.0'
 const PACKAGE_NAME_PATTERN = /^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)$/iu
 const REGISTRY_SPEC_PATTERN = /^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)(?:@[a-z0-9][a-z0-9._-]*)?$/iu
 const GITHUB_SPEC_PATTERN = /^github:[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*(?:#[a-z0-9][a-z0-9._\/-]*)?$/iu
@@ -243,13 +244,66 @@ async function mapWithConcurrency(values, limit, mapper) {
   return result
 }
 
+async function commandAvailable(command) {
+  const locator = process.platform === 'win32' ? 'where.exe' : 'which'
+  try {
+    await execFileAsync(locator, [command], { timeout: 3_000, windowsHide: true })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Build the fallback shim text without user-controlled interpolation. The
+ * version matches the repository's pinned package manager and is never
+ * installed globally.
+ */
+export function managedPnpmShimContent(platform = process.platform) {
+  if (platform === 'win32') {
+    return `@echo off\r\nnpm.cmd exec --yes --package=pnpm@${MANAGED_PNPM_VERSION} -- pnpm %*\r\n`
+  }
+  return `#!/bin/sh\nexec npm exec --yes --package=pnpm@${MANAGED_PNPM_VERSION} -- pnpm "$@"\n`
+}
+
+/**
+ * Prefer the user's pnpm. If Node.js provides npm but pnpm is absent, create a
+ * private Desktop-only pnpm shim under DSH_HOME. npm downloads the pinned pnpm
+ * into its normal cache on demand; system Node/npm and global packages are not
+ * modified. This runs only after the Marketplace is opened.
+ */
+async function ensurePluginPackageManager({ dshHome }) {
+  if (await commandAvailable('pnpm')) return { available: true, mode: 'system' }
+  if (!await commandAvailable('npm')) return { available: false, mode: 'missing' }
+  if (typeof dshHome !== 'string' || dshHome.length === 0) return { available: false, mode: 'missing' }
+
+  const binDir = join(dshHome, 'desktop-tools', 'bin')
+  const shimPath = join(binDir, process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm')
+  await mkdir(binDir, { recursive: true })
+  await writeFile(shimPath, managedPnpmShimContent(), { encoding: 'utf8', mode: 0o755 })
+  if (process.platform !== 'win32') await chmod(shimPath, 0o755)
+  return { available: true, mode: 'managed', pathPrefix: binDir }
+}
+
+function marketplaceEnvironment(baseEnvironment, packageManager) {
+  if (packageManager.pathPrefix === undefined) return baseEnvironment
+  return {
+    ...baseEnvironment,
+    PATH: `${packageManager.pathPrefix}${delimiter}${baseEnvironment.PATH ?? ''}`,
+  }
+}
+
 /** Run one official profile-plugin command without a shell or string interpolation. */
 async function runPluginCommand({ nodePath, dshHome, runtimeRoot, workingDirectory, args }) {
   const binPath = dshBinPath(runtimeRoot)
+  const packageManager = await ensurePluginPackageManager({ dshHome })
+  if (!packageManager.available) {
+    throw new Error('Plugin operation failed: pnpm is unavailable and npm cannot provide the managed pnpm fallback.')
+  }
   try {
     return await execFileAsync(nodePath, [binPath, 'plugin', '--profile', 'web', ...args], {
       cwd: workingDirectory ?? dirname(binPath),
-      env: harnessEnvironment(process.env, dshHome),
+      env: marketplaceEnvironment(harnessEnvironment(process.env, dshHome), packageManager),
       maxBuffer: PLUGIN_OUTPUT_LIMIT_BYTES,
       timeout: PLUGIN_COMMAND_TIMEOUT_MS,
       windowsHide: true,
@@ -262,18 +316,16 @@ async function runPluginCommand({ nodePath, dshHome, runtimeRoot, workingDirecto
   }
 }
 
-/** Detect only prerequisites; opening the app still pays no marketplace cost. */
-export async function inspectPluginEnvironment({ nodePath }) {
+/** Detect prerequisites without requiring a separately installed global pnpm. */
+export async function inspectPluginEnvironment({ nodePath, dshHome }) {
   const nodeVersion = await checkNodeRuntime(nodePath)
-  const locator = process.platform === 'win32' ? 'where.exe' : 'which'
-  let pnpmAvailable = false
-  try {
-    await execFileAsync(locator, ['pnpm'], { timeout: 3_000, windowsHide: true })
-    pnpmAvailable = true
-  } catch {
-    pnpmAvailable = false
+  const packageManager = await ensurePluginPackageManager({ dshHome })
+  return {
+    nodeVersion,
+    pnpmAvailable: packageManager.available,
+    profile: 'web',
+    pnpmMode: packageManager.mode,
   }
-  return { nodeVersion, pnpmAvailable, profile: 'web' }
 }
 
 /** List installed dependencies, local details, source evidence, and bounded update status. */

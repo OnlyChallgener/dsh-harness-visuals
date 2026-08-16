@@ -6,7 +6,12 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { writeWindowsClipboardText } from '../clipboard.mjs'
-import { parsePluginList, pluginPackageName, pluginSpec } from '../plugin-marketplace.mjs'
+import {
+  managedPnpmShimContent,
+  parsePluginList,
+  pluginPackageName,
+  pluginSpec,
+} from '../plugin-marketplace.mjs'
 import {
   harnessEnvironment,
   isSupportedNodeVersion,
@@ -87,6 +92,15 @@ test('validates marketplace package specs without exposing pnpm or shell syntax'
   assert.throws(() => pluginSpec('plugin&calc'), /npm package\/version or github:/)
   assert.throws(() => pluginSpec('file:..\\plugin'), /npm package\/version or github:/)
   assert.throws(() => pluginPackageName('plugin@1.2.3'), /package name is invalid/)
+})
+
+test('managed pnpm fallback is pinned and never installs globally', () => {
+  const windows = managedPnpmShimContent('win32')
+  const posix = managedPnpmShimContent('linux')
+  assert.match(windows, /--package=pnpm@11\.7\.0/)
+  assert.match(posix, /--package=pnpm@11\.7\.0/)
+  assert.doesNotMatch(windows, /install\s+-g|--global|@latest/)
+  assert.doesNotMatch(posix, /install\s+-g|--global|@latest/)
 })
 
 test('normalizes pnpm plugin-list output to stable marketplace rows', () => {
