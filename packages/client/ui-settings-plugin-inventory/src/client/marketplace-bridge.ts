@@ -57,13 +57,7 @@ export interface MarketplaceInstallerJob {
   error?: string
 }
 
-type MarketplaceInstallRequest = string | {
-  spec: string
-  mode: 'install' | 'update'
-  approveBuilds?: boolean
-}
-
-type MarketplaceJobRequest = {
+interface MarketplaceJobRequest {
   spec: string
   mode: 'install' | 'update'
 }
@@ -82,7 +76,6 @@ export interface PluginMarketplaceApi {
 interface DesktopBridge {
   pluginMarketplaceEnvironment?: () => Promise<MarketplaceEnvironment>
   pluginMarketplaceList?: () => Promise<MarketplacePlugin[]>
-  pluginMarketplaceInstall?: (request: MarketplaceInstallRequest) => Promise<MarketplaceMutationResult>
   pluginMarketplaceRemove?: (name: string) => Promise<MarketplaceMutationResult>
   pluginMarketplaceJobStart?: (request: MarketplaceJobRequest) => Promise<MarketplaceInstallerJob>
   pluginMarketplaceJobStatus?: () => Promise<MarketplaceInstallerJob | undefined>
@@ -104,7 +97,6 @@ export function desktopMarketplaceApi(): PluginMarketplaceApi | undefined {
   const desktop = candidate as DesktopBridge
   const environment = desktop.pluginMarketplaceEnvironment
   const list = desktop.pluginMarketplaceList
-  const legacyInstall = desktop.pluginMarketplaceInstall
   const remove = desktop.pluginMarketplaceRemove
   const startJob = desktop.pluginMarketplaceJobStart
   const statusJob = desktop.pluginMarketplaceJobStatus
@@ -114,17 +106,15 @@ export function desktopMarketplaceApi(): PluginMarketplaceApi | undefined {
   if (typeof environment !== 'function'
     || typeof list !== 'function'
     || typeof remove !== 'function'
+    || typeof startJob !== 'function'
+    || typeof statusJob !== 'function'
+    || typeof approveJob !== 'function'
+    || typeof cancelJob !== 'function'
     || typeof restart !== 'function') return undefined
 
-  const hasJobRuntime = typeof startJob === 'function'
-    && typeof statusJob === 'function'
-    && typeof approveJob === 'function'
-    && typeof cancelJob === 'function'
-
   const waitForJob = async (id: string): Promise<MarketplaceMutationResult> => {
-    if (!hasJobRuntime) throw new Error('Desktop plugin installer job runtime is unavailable.')
     while (true) {
-      const job = await statusJob!()
+      const job = await statusJob()
       if (job === undefined || job.id !== id) throw new Error('Desktop plugin installer lost the active job.')
       if (job.state === 'approval-required') {
         return {
@@ -144,14 +134,7 @@ export function desktopMarketplaceApi(): PluginMarketplaceApi | undefined {
     mode: 'install' | 'update',
     approveBuilds: boolean,
   ): Promise<MarketplaceMutationResult> => {
-    if (!hasJobRuntime) {
-      if (typeof legacyInstall !== 'function') throw new Error('Desktop plugin installer is unavailable.')
-      return mode === 'update'
-        ? legacyInstall({ spec, mode, ...(approveBuilds ? { approveBuilds: true } : {}) })
-        : legacyInstall(approveBuilds ? { spec, mode, approveBuilds: true } : spec)
-    }
-
-    const current = await statusJob!()
+    const current = await statusJob()
     if (approveBuilds) {
       if (current === undefined
         || current.spec !== spec
@@ -159,7 +142,7 @@ export function desktopMarketplaceApi(): PluginMarketplaceApi | undefined {
         || current.state !== 'approval-required') {
         throw new Error('No matching plugin build approval is pending.')
       }
-      const resumed = await approveJob!(current.id)
+      const resumed = await approveJob(current.id)
       return waitForJob(resumed.id)
     }
 
@@ -170,7 +153,7 @@ export function desktopMarketplaceApi(): PluginMarketplaceApi | undefined {
       return waitForJob(current.id)
     }
 
-    const started = await startJob!({ spec, mode })
+    const started = await startJob({ spec, mode })
     return waitForJob(started.id)
   }
 
@@ -180,8 +163,8 @@ export function desktopMarketplaceApi(): PluginMarketplaceApi | undefined {
     install: (spec, approveBuilds = false) => runJob(spec, 'install', approveBuilds),
     update: (spec, approveBuilds = false) => runJob(spec, 'update', approveBuilds),
     remove: name => remove(name),
-    jobStatus: () => hasJobRuntime ? statusJob!() : Promise.resolve(undefined),
-    cancelJob: id => hasJobRuntime ? cancelJob!(id) : Promise.resolve(undefined),
+    jobStatus: () => statusJob(),
+    cancelJob: id => cancelJob(id),
     restart: async () => { await restart() },
   }
 }
