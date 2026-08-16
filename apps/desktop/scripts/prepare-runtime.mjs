@@ -1,6 +1,7 @@
-import { cp, rm } from 'node:fs/promises'
+import { access, cp, readdir, readFile, rm } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { dirname, relative, resolve, sep } from 'node:path'
+import runtimeOverlays from '../runtime-overlays.cjs'
 
 const desktopRoot = resolve(import.meta.dirname, '..')
 const repositoryRoot = resolve(desktopRoot, '..', '..')
@@ -12,13 +13,6 @@ const webRequire = createRequire(webAppPackage)
 const frontendPackage = webRequire.resolve('@deepseek-ai/dsh-web-frontend/package.json')
 const packagedFrontendDist = resolve(dirname(frontendPackage), 'dist')
 
-const localRuntimePackages = [
-  {
-    name: '@deepseek-ai/dsh-host-apiproxy',
-    source: resolve(repositoryRoot, 'packages', 'host', 'apiproxy', 'lib'),
-  },
-]
-
 function runtimePath(...parts) {
   const path = resolve(runtimeRoot, ...parts)
   const tail = relative(runtimeRoot, path)
@@ -28,14 +22,48 @@ function runtimePath(...parts) {
   return path
 }
 
-if (!packagedFrontendDist.startsWith(`${runtimeRoot}\\`)) {
+async function directoryContainsMarker(root, marker) {
+  const entries = await readdir(root, { withFileTypes: true })
+  for (const entry of entries) {
+    const path = resolve(root, entry.name)
+    if (entry.isDirectory()) {
+      if (await directoryContainsMarker(path, marker)) return true
+      continue
+    }
+    if (!entry.isFile() || !/\.(?:js|css|json)$/iu.test(entry.name)) continue
+    const content = await readFile(path, 'utf8')
+    if (content.includes(marker)) return true
+  }
+  return false
+}
+
+async function assertMarkers(root, overlay, phase) {
+  for (const marker of overlay.markers) {
+    if (!await directoryContainsMarker(root, marker)) {
+      throw new Error(`${phase} ${overlay.name} is missing required Desktop feature marker: ${marker}`)
+    }
+  }
+}
+
+if (!packagedFrontendDist.startsWith(`${runtimeRoot}\\`) && !packagedFrontendDist.startsWith(`${runtimeRoot}/`)) {
   throw new Error('Refusing to replace a frontend outside the desktop runtime.')
 }
 await rm(packagedFrontendDist, { recursive: true, force: true })
 await cp(frontendDist, packagedFrontendDist, { recursive: true })
 
-for (const entry of localRuntimePackages) {
-  const target = runtimePath('node_modules', ...entry.name.split('/'), 'lib')
+for (const overlay of runtimeOverlays) {
+  const source = resolve(repositoryRoot, ...overlay.repoPath.split('/'), 'lib')
+  const packageRoot = runtimePath('node_modules', ...overlay.name.split('/'))
+  const target = resolve(packageRoot, 'lib')
+
+  // A missing published package means the pinned runtime and this fork have
+  // drifted too far for a safe overlay. Fail the build instead of silently
+  // producing an installer that drops one of the fork's features.
+  await access(resolve(packageRoot, 'package.json'))
+  await access(source)
+  await assertMarkers(source, overlay, 'Local build')
+
   await rm(target, { recursive: true, force: true })
-  await cp(entry.source, target, { recursive: true })
+  await cp(source, target, { recursive: true })
+  await assertMarkers(target, overlay, 'Prepared runtime')
 }

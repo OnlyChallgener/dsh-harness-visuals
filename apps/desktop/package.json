@@ -11,7 +11,7 @@
     "prepare:electron": "install-electron",
     "dev": "pnpm run prepare:runtime && pnpm run prepare:electron && electron .",
     "start": "pnpm run prepare:runtime && pnpm run prepare:electron && electron .",
-    "test": "node --test test/runtime.test.mjs",
+    "test": "node --test test/*.test.mjs",
     "dist:win": "pnpm run build:workspace && pnpm run dist:win:fast",
     "dist:win:fast": "pnpm run prepare:runtime && electron-builder --win nsis --x64"
   },
