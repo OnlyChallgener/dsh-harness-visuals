@@ -427,28 +427,102 @@ export function classifyMarketplacePnpmFailure(output) {
   return { kind: 'other' }
 }
 
-/** Pure YAML merge used by the guarded build-script approval path. */
-export function mergeAllowBuildsDocument(source, packages) {
-  const safePackages = [...new Set(packages.map(pluginPackageName))].sort()
-  if (safePackages.length === 0) return source
-  let yaml = typeof source === 'string' ? source : ''
-  const blockPattern = /^allowBuilds:\r?\n((?:[ \t]+[^\r\n]*(?:\r?\n|$))*)/mu
-  const match = blockPattern.exec(yaml)
-  if (match === null) {
-    const prefix = yaml.length === 0 || yaml.endsWith('\n') ? yaml : `${yaml}\n`
-    return `${prefix}allowBuilds:\n${safePackages.map(name => `  ${name}: true`).join('\n')}\n`
+function simpleAllowBuildEntry(line) {
+  const match = /^([ \t]+)([^:#][^:]*):[ \t]*(.*)$/u.exec(line)
+  if (match === null) return undefined
+  const name = match[2].trim()
+  if (!PACKAGE_NAME_PATTERN.test(name)) return undefined
+  return { indent: match[1], name, value: match[3].trim() }
+}
+
+function preferredAllowBuildValue(values) {
+  const normalized = values.map(value => value.replace(/\s+#.*$/u, '').trim().toLowerCase())
+  if (normalized.includes('false')) return 'false'
+  if (normalized.includes('true')) return 'true'
+  return values[0] ?? 'set this to true or false'
+}
+
+/**
+ * Normalize pnpm's allowBuilds block without parsing the rest of the workspace
+ * document. pnpm 11 can append `set this to true or false` placeholders on a
+ * failed install; older Desktop builds then appended a second key, producing
+ * invalid YAML. Exact duplicate package keys are collapsed conservatively:
+ * an explicit false wins unless this call carries a fresh user approval.
+ */
+export function normalizeAllowBuildsDocument(source, approvedPackages = []) {
+  const yaml = typeof source === 'string' ? source : ''
+  const approved = new Set(approvedPackages.map(pluginPackageName))
+  const eol = yaml.includes('\r\n') ? '\r\n' : '\n'
+  const lines = yaml.split(/\r?\n/u)
+  const headerIndex = lines.findIndex(line => /^allowBuilds:\s*(?:#.*)?$/u.test(line))
+
+  if (headerIndex < 0) {
+    if (approved.size === 0) return yaml
+    const prefix = yaml.length === 0 || yaml.endsWith('\n') ? yaml : `${yaml}${eol}`
+    return `${prefix}allowBuilds:${eol}${[...approved].sort().map(name => `  ${name}: true`).join(eol)}${eol}`
   }
-  let block = match[1]
-  for (const name of safePackages) {
-    const escaped = name.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
-    const linePattern = new RegExp(`^([ \\t]+${escaped}\\s*:\\s*)(?:true|false)\\s*$`, 'mu')
-    if (linePattern.test(block)) {
-      block = block.replace(linePattern, '$1true')
-    } else {
-      block = `${block}${block.length === 0 || block.endsWith('\n') ? '' : '\n'}  ${name}: true\n`
+
+  let blockEnd = headerIndex + 1
+  while (blockEnd < lines.length) {
+    const line = lines[blockEnd]
+    if (line.trim().length === 0 || /^[ \t]/u.test(line)) {
+      blockEnd += 1
+      continue
     }
+    break
   }
-  return yaml.replace(blockPattern, `allowBuilds:\n${block}`)
+
+  const block = lines.slice(headerIndex + 1, blockEnd)
+  const valuesByName = new Map()
+  for (const line of block) {
+    const entry = simpleAllowBuildEntry(line)
+    if (entry === undefined) continue
+    const values = valuesByName.get(entry.name) ?? []
+    values.push(entry.value)
+    valuesByName.set(entry.name, values)
+  }
+
+  const emitted = new Set()
+  const nextBlock = []
+  for (const line of block) {
+    const entry = simpleAllowBuildEntry(line)
+    if (entry === undefined) {
+      nextBlock.push(line)
+      continue
+    }
+    if (emitted.has(entry.name)) continue
+    emitted.add(entry.name)
+    const value = approved.has(entry.name)
+      ? 'true'
+      : preferredAllowBuildValue(valuesByName.get(entry.name) ?? [entry.value])
+    nextBlock.push(`${entry.indent}${entry.name}: ${value}`)
+  }
+  for (const name of [...approved].sort()) {
+    if (!emitted.has(name)) nextBlock.push(`  ${name}: true`)
+  }
+
+  return [...lines.slice(0, headerIndex + 1), ...nextBlock, ...lines.slice(blockEnd)].join(eol)
+}
+
+/** Preserve the old helper name used by tests and callers. */
+export function mergeAllowBuildsDocument(source, packages) {
+  return normalizeAllowBuildsDocument(source, packages)
+}
+
+/** Repair only duplicate simple package keys left by an earlier Desktop build. */
+export async function repairProfileAllowBuilds(dshHome) {
+  const file = webProfileWorkspacePath(dshHome)
+  if (file === undefined) return false
+  let before
+  try {
+    before = await readFile(file, 'utf8')
+  } catch {
+    return false
+  }
+  const after = normalizeAllowBuildsDocument(before)
+  if (after === before) return false
+  await writeFile(file, after, 'utf8')
+  return true
 }
 
 async function allowProfileBuilds(dshHome, packages) {
@@ -456,7 +530,7 @@ async function allowProfileBuilds(dshHome, packages) {
   if (file === undefined) throw new Error('Cannot locate the Web profile pnpm-workspace.yaml for build approval.')
   let before = ''
   try { before = await readFile(file, 'utf8') } catch { /* create the file below */ }
-  const after = mergeAllowBuildsDocument(before, packages)
+  const after = normalizeAllowBuildsDocument(before, packages)
   if (after !== before) await writeFile(file, after, 'utf8')
 }
 
@@ -477,6 +551,10 @@ async function runPluginCommand({ nodePath, dshHome, runtimeRoot, workingDirecto
     throw new Error('Plugin operation failed: pnpm is unavailable and npm cannot provide the managed pnpm fallback.')
   }
   try {
+    // Repair the exact duplicate-key shape created by pnpm 11 + the previous
+    // Desktop approval implementation before any `dsh plugin` command parses
+    // the profile. Valid workspace settings and unrelated keys are untouched.
+    await repairProfileAllowBuilds(dshHome)
     return await execFileAsync(nodePath, [binPath, 'plugin', '--profile', 'web', ...args], {
       cwd: workingDirectory ?? dirname(binPath),
       env: marketplaceEnvironment(harnessEnvironment(process.env, dshHome), packageManager),
