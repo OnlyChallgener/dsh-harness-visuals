@@ -16,7 +16,14 @@ import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { writeWindowsClipboardText } from './clipboard.mjs'
-import { checkNodeRuntime, runWindowsOcr, startHarness, stopProcessTree, webUrlFromOutput } from './runtime.mjs'
+import {
+  checkNodeRuntime,
+  runWindowsOcr,
+  selectHarnessPort,
+  startHarness,
+  stopProcessTree,
+  webUrlFromOutput,
+} from './runtime.mjs'
 
 const STARTUP_TIMEOUT_MS = 90_000
 const WINDOW_STATE_FILE = 'window-state.json'
@@ -30,6 +37,7 @@ let webUrl
 let startupError
 let startupLog = ''
 let startupTimer
+let startupStartedAt
 let quitReady = false
 let startupTask
 let restartTask
@@ -65,6 +73,15 @@ function titleBarOverlayOptions() {
     symbolColor: nativeTheme.shouldUseDarkColors ? '#F7F7F8' : '#111318',
     height: TITLE_BAR_HEIGHT,
   }
+}
+
+/** Records one bounded startup timing line without changing the launch path. */
+function markStartup(stage) {
+  if (startupStartedAt === undefined) return
+  const elapsed = Math.max(0, Math.round(performance.now() - startupStartedAt))
+  const line = `[desktop-startup] ${stage} +${elapsed}ms`
+  startupLog = `${startupLog}${line}\n`.slice(-4_096)
+  console.info(line)
 }
 
 /** Redacts common credential-shaped values before exposing startup diagnostics. */
@@ -166,19 +183,29 @@ function showStartupError(message) {
 async function bootHarnessImpl() {
   startupError = undefined
   startupLog = ''
+  startupStartedAt = performance.now()
+  markStartup('boot')
   const nodePath = process.env.DSH_DESKTOP_NODE ?? (process.platform === 'win32' ? 'node.exe' : 'node')
+  let nodeVersion
   try {
-    await checkNodeRuntime(nodePath)
+    nodeVersion = await checkNodeRuntime(nodePath)
+    markStartup(`node-ready ${nodeVersion}`)
   } catch (error) {
     showStartupError(error instanceof Error ? error.message : String(error))
     return
   }
+  const port = await selectHarnessPort()
+  markStartup(`port-selected ${port === 0 ? 'ephemeral' : String(port)}`)
   let started
   const acceptReadyUrl = (announcedUrl) => {
     if (webUrl !== undefined || announcedUrl === undefined) return
     clearTimeout(startupTimer)
     webUrl = announcedUrl
-    void mainWindow?.loadURL(webUrl)
+    markStartup(`host-ready ${announcedUrl}`)
+    const loadTask = mainWindow?.loadURL(webUrl)
+    if (loadTask !== undefined) {
+      void loadTask.then(() => { markStartup('web-ui-ready') }, () => { markStartup('web-ui-load-failed') })
+    }
   }
   try {
     started = startHarness({
@@ -189,6 +216,7 @@ async function bootHarnessImpl() {
         ? join(process.resourcesPath, 'runtime-launcher.cjs')
         : join(import.meta.dirname, 'runtime-launcher.cjs'),
       workingDirectory: app.getPath('documents'),
+      port,
       onOutput(output) {
         startupLog = `${startupLog}${output}`.slice(-4_096)
         acceptReadyUrl(webUrlFromOutput(startupLog))
@@ -212,6 +240,7 @@ async function bootHarnessImpl() {
         showStartupError(`Node.js could not start Harness: ${error.message}`)
       },
     })
+    markStartup('process-spawned')
   } catch (error) {
     showStartupError(`Harness runtime could not be loaded: ${error instanceof Error ? error.message : String(error)}`)
     return
@@ -297,6 +326,15 @@ function imageFilter(mediaType) {
   return { name: 'PNG image', extensions: ['png'] }
 }
 
+/** Returns whether the native clipboard currently carries an image. */
+function clipboardHasImage() {
+  try {
+    return !clipboard.readImage().isEmpty()
+  } catch {
+    return false
+  }
+}
+
 /** Creates the single browser window that hosts the Harness UI. */
 function createWindow() {
   const savedState = readWindowState()
@@ -335,11 +373,16 @@ function createWindow() {
   })
   mainWindow.webContents.on('context-menu', (_event, params) => {
     const flags = params.editFlags
+    const canPaste = flags.canPaste || clipboardHasImage()
     const template = params.isEditable
       ? [
           { role: 'cut', enabled: flags.canCut },
           { role: 'copy', enabled: flags.canCopy },
-          { role: 'paste', enabled: flags.canPaste },
+          {
+            label: '粘贴',
+            enabled: canPaste,
+            click: () => mainWindow?.webContents.paste(),
+          },
           { type: 'separator' },
           { role: 'selectAll', enabled: flags.canSelectAll },
         ]
