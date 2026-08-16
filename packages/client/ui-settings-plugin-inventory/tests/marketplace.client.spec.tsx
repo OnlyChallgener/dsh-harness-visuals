@@ -108,7 +108,9 @@ describe('PluginMarketplaceSettingsTab', () => {
     expect(bridge.install).toHaveBeenNthCalledWith(1, 'native-plugin', false)
     expect(bridge.install).toHaveBeenNthCalledWith(2, 'native-plugin', true)
     expect(globalThis.confirm).toHaveBeenCalledOnce()
-    expect(String(vi.mocked(globalThis.confirm).mock.calls[0][0])).toContain('ssh2')
+    const confirmCall = vi.mocked(globalThis.confirm).mock.calls.at(0)
+    expect(confirmCall).toBeDefined()
+    expect(String(confirmCall?.[0])).toContain('ssh2')
     expect(await screen.findByText(en.marketplaceRestartTitle)).toBeTruthy()
   })
 
@@ -129,7 +131,7 @@ describe('PluginMarketplaceSettingsTab', () => {
 
   it('uses the dedicated update mode instead of treating updates as ordinary installs', async () => {
     const bridge = createApi()
-    bridge.list.mockResolvedValue([{ 
+    bridge.list.mockResolvedValue([{
       name: '@fixture/plugin',
       version: '1.2.3',
       latestVersion: '1.3.0',
