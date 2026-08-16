@@ -96,15 +96,14 @@ function validateRecord(record: WallpaperRecord): void {
 }
 
 function clearPresentation(): void {
-  if (activeUrl !== undefined && typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(activeUrl)
+  if (activeUrl !== undefined) URL.revokeObjectURL(activeUrl)
   activeUrl = undefined
-  if (typeof document !== 'undefined') document.documentElement.style.removeProperty(WALLPAPER_PROPERTY)
+  document.documentElement.style.removeProperty(WALLPAPER_PROPERTY)
 }
 
 function present(record: WallpaperRecord): void {
   validateRecord(record)
   clearPresentation()
-  if (typeof URL.createObjectURL !== 'function' || typeof document === 'undefined') return
   activeUrl = URL.createObjectURL(record.blob)
   document.documentElement.style.setProperty(WALLPAPER_PROPERTY, `url("${activeUrl}")`)
 }
@@ -119,8 +118,17 @@ async function restoreWallpaper(): Promise<void> {
     present(record)
     publish({ loaded: true, busy: false, name: record.name })
   } catch {
-    clearPresentation()
+    if (typeof document !== 'undefined') clearPresentation()
     publish({ loaded: true, busy: false, error: 'Saved wallpaper could not be restored.' })
+  }
+}
+
+/** Snapshot without a stale error, preserving the currently shown wallpaper name. */
+function pendingSnapshot(): WallpaperSnapshot {
+  return {
+    loaded: snapshot.loaded,
+    busy: true,
+    ...(snapshot.name === undefined ? {} : { name: snapshot.name }),
   }
 }
 
@@ -133,7 +141,7 @@ export async function setWallpaper(file: File): Promise<void> {
     publish({ ...snapshot, busy: false, error: error instanceof Error ? error.message : String(error) })
     return
   }
-  publish({ ...snapshot, busy: true, error: undefined })
+  publish(pendingSnapshot())
   try {
     await writeRecord(record)
     present(record)
@@ -145,7 +153,7 @@ export async function setWallpaper(file: File): Promise<void> {
 
 /** Remove the stored wallpaper only after its durable delete succeeds. */
 export async function clearWallpaper(): Promise<void> {
-  publish({ ...snapshot, busy: true, error: undefined })
+  publish(pendingSnapshot())
   try {
     await writeRecord(undefined)
     clearPresentation()
