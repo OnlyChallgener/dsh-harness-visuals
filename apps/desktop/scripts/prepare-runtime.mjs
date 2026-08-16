@@ -1,4 +1,4 @@
-import { access, cp, readdir, readFile, rm } from 'node:fs/promises'
+import { access, chmod, cp, readdir, readFile, rm } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { dirname, relative, resolve, sep } from 'node:path'
 import runtimeOverlays from '../runtime-overlays.cjs'
@@ -67,3 +67,11 @@ for (const overlay of runtimeOverlays) {
   await cp(source, target, { recursive: true })
   await assertMarkers(target, overlay, 'Prepared runtime')
 }
+
+// Plugin management must use the same package-manager version on every user
+// machine. `npm install --prefix runtime` installs this pinned pnpm package;
+// the Desktop exposes it through runtime/bin instead of depending on a global
+// pnpm/npm/corepack installation.
+await access(runtimePath('node_modules', 'pnpm', 'bin', 'pnpm.cjs'))
+await access(runtimePath('bin', process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'))
+if (process.platform !== 'win32') await chmod(runtimePath('bin', 'pnpm'), 0o755)
