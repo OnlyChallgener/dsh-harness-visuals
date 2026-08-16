@@ -293,6 +293,60 @@ function marketplaceEnvironment(baseEnvironment, packageManager) {
   }
 }
 
+function webProfileManifestPath(dshHome) {
+  if (typeof dshHome !== 'string' || dshHome.length === 0) return undefined
+  return join(dshHome, 'profiles', 'web', 'package.json')
+}
+
+/** Snapshot only the profile dependency map before pnpm gets a chance to mutate it. */
+export async function readProfileDependencySnapshot(dshHome) {
+  const file = webProfileManifestPath(dshHome)
+  if (file === undefined) return undefined
+  try {
+    const manifest = JSON.parse(await readFile(file, 'utf8'))
+    if (manifest === null || typeof manifest !== 'object' || Array.isArray(manifest)) return undefined
+    const dependencies = manifest.dependencies
+    if (dependencies === undefined) return {}
+    if (dependencies === null || typeof dependencies !== 'object' || Array.isArray(dependencies)) return undefined
+    return Object.fromEntries(Object.entries(dependencies).filter(([, spec]) => typeof spec === 'string'))
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Restore a failed mutation's dependency map without touching settings or the
+ * bundle list. `dsh plugin` reconciles bundles only after pnpm exits cleanly,
+ * while pnpm may write package.json before a later install step fails.
+ */
+export async function restoreProfileDependencySnapshot(dshHome, snapshot) {
+  if (snapshot === undefined) return []
+  const file = webProfileManifestPath(dshHome)
+  if (file === undefined) return []
+  let manifest
+  try {
+    manifest = JSON.parse(await readFile(file, 'utf8'))
+  } catch {
+    return []
+  }
+  if (manifest === null || typeof manifest !== 'object' || Array.isArray(manifest)) return []
+  const rawCurrent = manifest.dependencies
+  const current = rawCurrent !== null && typeof rawCurrent === 'object' && !Array.isArray(rawCurrent)
+    ? rawCurrent
+    : {}
+  const touched = new Set()
+  for (const [name, spec] of Object.entries(current)) {
+    if (typeof spec !== 'string' || snapshot[name] !== spec) touched.add(name)
+  }
+  for (const [name, spec] of Object.entries(snapshot)) {
+    if (current[name] !== spec) touched.add(name)
+  }
+  if (touched.size === 0) return []
+  manifest.dependencies = { ...snapshot }
+  await writeFile(file, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
+  return [...touched].sort()
+}
+
 /** Run one official profile-plugin command without a shell or string interpolation. */
 async function runPluginCommand({ nodePath, dshHome, runtimeRoot, workingDirectory, args }) {
   const binPath = dshBinPath(runtimeRoot)
@@ -342,11 +396,28 @@ function serializeMutation(operation) {
   return run
 }
 
+async function runProfileMutation(options, args) {
+  const before = await readProfileDependencySnapshot(options.dshHome)
+  try {
+    return await runPluginCommand({ ...options, args })
+  } catch (error) {
+    let rolledBack = []
+    try {
+      rolledBack = await restoreProfileDependencySnapshot(options.dshHome, before)
+    } catch {
+      rolledBack = []
+    }
+    if (rolledBack.length === 0) throw error
+    const detail = error instanceof Error ? error.message : String(error)
+    throw new Error(`${detail}\nDesktop rolled back the failed Web profile dependency change: ${rolledBack.join(', ')}`)
+  }
+}
+
 /** Install one package spec into the Web profile. A restart is intentionally left to the caller. */
 export function installPlugin(options, value) {
   const spec = pluginSpec(value)
   return serializeMutation(async () => {
-    await runPluginCommand({ ...options, args: ['add', spec] })
+    await runProfileMutation(options, ['add', spec])
     return { installed: spec, restartRequired: true }
   })
 }
@@ -355,7 +426,7 @@ export function installPlugin(options, value) {
 export function removePlugin(options, value) {
   const name = pluginPackageName(value)
   return serializeMutation(async () => {
-    await runPluginCommand({ ...options, args: ['remove', name] })
+    await runProfileMutation(options, ['remove', name])
     return { removed: name, restartRequired: true }
   })
 }
