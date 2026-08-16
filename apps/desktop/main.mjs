@@ -378,11 +378,7 @@ function createWindow() {
       ? [
           { role: 'cut', enabled: flags.canCut },
           { role: 'copy', enabled: flags.canCopy },
-          {
-            label: '粘贴',
-            enabled: canPaste,
-            click: () => mainWindow?.webContents.paste(),
-          },
+          { role: 'paste', enabled: canPaste },
           { type: 'separator' },
           { role: 'selectAll', enabled: flags.canSelectAll },
         ]
