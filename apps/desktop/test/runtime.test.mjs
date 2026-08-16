@@ -10,6 +10,7 @@ import {
   harnessEnvironment,
   isSupportedNodeVersion,
   nodeVersionFromOutput,
+  selectHarnessPort,
   webUrlFromOutput,
 } from '../runtime.mjs'
 
@@ -30,6 +31,23 @@ test('announces the ready URL over the dedicated desktop IPC channel', async () 
 
 test('does not accept a non-local startup URL', () => {
   assert.equal(webUrlFromOutput('dsh web: http://localhost:3080\n'), undefined)
+})
+
+test('prefers the first available stable Harness port and falls back to ephemeral', async () => {
+  const checked = []
+  const selected = await selectHarnessPort({
+    candidates: [3080, 3081, 3082],
+    probe: async port => {
+      checked.push(port)
+      return port === 3082
+    },
+  })
+  assert.equal(selected, 3082)
+  assert.deepEqual(checked, [3080, 3081, 3082])
+  assert.equal(await selectHarnessPort({
+    candidates: [3080, 3081],
+    probe: async () => false,
+  }), 0)
 })
 
 test('parses and validates the supported Node.js runtime range', () => {
