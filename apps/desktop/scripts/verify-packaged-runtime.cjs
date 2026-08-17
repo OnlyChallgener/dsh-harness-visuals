@@ -35,7 +35,7 @@ module.exports = async function verifyPackagedRuntime(context) {
     throw new Error(`Packaged Harness runtime entry is missing: ${entry}`)
   }
 
-  const pnpmEntry = path.join(runtimeRoot, 'node_modules', 'pnpm', 'bin', 'pnpm.cjs')
+  const pnpmEntry = path.join(runtimeRoot, 'node_modules', 'pnpm', 'bin', 'pnpm.mjs')
   const pnpmLauncher = path.join(runtimeRoot, 'bin', process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm')
   try {
     await access(pnpmEntry)
