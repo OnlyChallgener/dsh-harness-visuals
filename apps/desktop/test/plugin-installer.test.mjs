@@ -39,6 +39,12 @@ test('desktop packages one pinned pnpm runtime and exposes no legacy install bri
   assert.match(posixLauncher, /node_modules\/pnpm\/bin\/pnpm\.mjs/)
 })
 
+test('explicit marketplace install uses pnpm canonical release-age CLI key', async () => {
+  const installerSource = await readFile(new URL('../plugin-installer.mjs', import.meta.url), 'utf8')
+  assert.match(installerSource, /--config\.minimum-release-age=0/)
+  assert.doesNotMatch(installerSource, /--config\.minimumReleaseAge=0/)
+})
+
 test('repairs pnpm allowBuilds placeholders and quotes scoped package keys', () => {
   const before = [
     'packages:',
