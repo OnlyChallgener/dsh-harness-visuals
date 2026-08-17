@@ -351,7 +351,7 @@ async function runWithRecovery(options, args, context) {
     const failure = classifyMarketplacePnpmFailure(detail)
     if (failure.kind === 'release-age' && args[0] === 'add') {
       context.onProgress?.({ stage: 'retrying', message: 'Retrying this explicit install/update without the release-age gate.' })
-      return runOfficialPluginCommand(options, ['add', '--config.minimumReleaseAge=0', ...args.slice(1)], context)
+      return runOfficialPluginCommand(options, ['add', '--config.minimum-release-age=0', ...args.slice(1)], context)
     }
     if (failure.kind === 'transient-network') {
       context.onProgress?.({ stage: 'retrying', message: 'Network interruption detected; retrying once.' })
