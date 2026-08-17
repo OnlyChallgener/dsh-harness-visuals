@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process'
 import { access, readFile, writeFile } from 'node:fs/promises'
 import { delimiter, dirname, join } from 'node:path'
 import {
+  classifyMarketplacePnpmFailure,
   comparePluginVersions,
   exactRegistryPluginVersion,
   parseBlockedBuildPackages,
@@ -28,12 +29,12 @@ function webProfileWorkspacePath(dshHome) {
   return join(webProfileDir(dshHome), 'pnpm-workspace.yaml')
 }
 
-function packagedPnpmEntry(runtimeRoot) {
-  return join(runtimeRoot, 'node_modules', 'pnpm', 'bin', 'pnpm.cjs')
-}
-
 function packagedPnpmBin(runtimeRoot) {
   return join(runtimeRoot, 'bin')
+}
+
+function packagedPnpmEntry(runtimeRoot) {
+  return join(runtimeRoot, 'node_modules', 'pnpm', 'bin', 'pnpm.mjs')
 }
 
 function packagedPnpmLauncher(runtimeRoot) {
@@ -41,11 +42,9 @@ function packagedPnpmLauncher(runtimeRoot) {
 }
 
 async function officialPluginEnvironment(options) {
-  const pnpmEntry = packagedPnpmEntry(options.runtimeRoot)
-  const pnpmLauncher = packagedPnpmLauncher(options.runtimeRoot)
   try {
-    await access(pnpmEntry)
-    await access(pnpmLauncher)
+    await access(packagedPnpmEntry(options.runtimeRoot))
+    await access(packagedPnpmLauncher(options.runtimeRoot))
   } catch {
     throw new Error('The Desktop packaged pnpm runtime is missing. Rebuild or reinstall DeepSeek Harness Desktop.')
   }
@@ -74,11 +73,7 @@ function quoteYamlKey(key) {
   return key
 }
 
-/**
- * Repair pnpm placeholders/duplicates and optionally approve exact build
- * packages. Only the allowBuilds mapping is rewritten; every other workspace
- * setting is preserved verbatim.
- */
+/** Repair only the allowBuilds block left by earlier pnpm/Desktop runs. */
 export function rewriteAllowBuildsDocument(source, approvedPackages = []) {
   const yaml = typeof source === 'string' ? source : ''
   const approved = new Set(approvedPackages.map(pluginPackageName))
@@ -98,7 +93,7 @@ export function rewriteAllowBuildsDocument(source, approvedPackages = []) {
       try {
         values.set(pluginPackageName(key), entry[2].toLowerCase())
       } catch {
-        // Ignore malformed placeholder rows left by older pnpm/Desktop runs.
+        // Drop malformed placeholder rows rather than preserving invalid YAML.
       }
     }
   }
@@ -116,7 +111,7 @@ export function rewriteAllowBuildsDocument(source, approvedPackages = []) {
   return `${prefix}${replacement}`
 }
 
-async function updateAllowBuilds(dshHome, approvedPackages = []) {
+async function updateAllowBuilds(dshHome, approvedPackages) {
   if (approvedPackages.length === 0) return
   const file = webProfileWorkspacePath(dshHome)
   let before = ''
@@ -138,6 +133,18 @@ async function readProfileState(dshHome) {
   } catch {
     return { dependencies: {}, bundles: [] }
   }
+}
+
+async function restoreProfileState(dshHome, state) {
+  const file = webProfileManifestPath(dshHome)
+  let manifest
+  try { manifest = JSON.parse(await readFile(file, 'utf8')) } catch { return }
+  if (manifest === null || typeof manifest !== 'object' || Array.isArray(manifest)) return
+  manifest.dependencies = { ...state.dependencies }
+  manifest.dsh ??= {}
+  manifest.dsh.profile ??= {}
+  manifest.dsh.profile.bundles = [...state.bundles]
+  await writeFile(file, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
 }
 
 function registryPackageName(spec) {
@@ -181,7 +188,7 @@ async function pathExists(path) {
   }
 }
 
-/** Validate that a successful official DSH mutation left a usable package. */
+/** Verify the package and DSH surface that actually landed on disk. */
 export async function validateInstalledPlugin(dshHome, name) {
   const safeName = pluginPackageName(name)
   let installed
@@ -195,11 +202,11 @@ export async function validateInstalledPlugin(dshHome, name) {
     throw new Error(`Installed package ${safeName} does not declare a DSH plugin surface.`)
   }
 
-  const entryCandidates = rootExportCandidates(manifest)
-  if (entryCandidates.length > 0) {
-    const present = await Promise.all(entryCandidates.map(candidate => pathExists(join(installed.directory, candidate))))
+  const entries = rootExportCandidates(manifest)
+  if (entries.length > 0) {
+    const present = await Promise.all(entries.map(candidate => pathExists(join(installed.directory, candidate))))
     if (!present.some(Boolean)) {
-      throw new Error(`Installed plugin ${safeName} is missing its declared runtime entry. Its build did not complete.`)
+      throw new Error(`Installed plugin ${safeName} is missing its declared runtime entry.`)
     }
   }
 
@@ -235,8 +242,8 @@ function errorDetail(error) {
   return raw.length > 12_000 ? raw.slice(-12_000) : raw
 }
 
-function abortError(message = 'Plugin operation cancelled.') {
-  const error = new Error(message)
+function abortError() {
+  const error = new Error('Plugin operation cancelled.')
   error.name = 'AbortError'
   return error
 }
@@ -245,16 +252,11 @@ function killProcessTree(child) {
   if (child.pid === undefined) return
   if (process.platform === 'win32') {
     try {
-      const killer = spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], {
-        stdio: 'ignore',
-        windowsHide: true,
-      })
+      const killer = spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore', windowsHide: true })
       killer.on('error', () => {})
       killer.unref?.()
-    } catch {
-      try { child.kill('SIGKILL') } catch { /* already exited */ }
-    }
-    return
+      return
+    } catch { /* fall through */ }
   }
   try { process.kill(-child.pid, 'SIGTERM') } catch {
     try { child.kill('SIGTERM') } catch { /* already exited */ }
@@ -269,17 +271,12 @@ function createLineFeeder(onProgress) {
     while ((newline = buffer.indexOf('\n')) >= 0) {
       const line = buffer.slice(0, newline).trim()
       buffer = buffer.slice(newline + 1)
-      if (line.length === 0) continue
-      onProgress?.({ stage: 'installing', message: line.slice(-PROGRESS_LINE_LIMIT) })
+      if (line.length > 0) onProgress?.({ stage: 'installing', message: line.slice(-PROGRESS_LINE_LIMIT) })
     }
   }
 }
 
-/**
- * Run the official `dsh plugin --profile web ...` command. Desktop only owns
- * process lifetime and the pinned pnpm runtime; profile mutation/reconcile is
- * intentionally left to upstream DSH.
- */
+/** Run upstream `dsh plugin --profile web ...` with Desktop-owned process lifetime. */
 export async function runOfficialPluginCommand(options, args, { signal, onProgress } = {}) {
   const binPath = dshBinPath(options.runtimeRoot)
   const env = await officialPluginEnvironment(options)
@@ -318,14 +315,12 @@ export async function runOfficialPluginCommand(options, args, { signal, onProgre
     signal?.addEventListener?.('abort', onAbort, { once: true })
     const timer = setTimeout(() => {
       timedOut = true
-      onProgress?.({ stage: 'timeout', message: 'Plugin installation exceeded 15 minutes; stopping the package process.' })
+      onProgress?.({ stage: 'timeout', message: 'Plugin operation exceeded 15 minutes; stopping the package process.' })
       killProcessTree(child)
     }, INSTALL_TIMEOUT_MS)
     timer.unref?.()
 
-    child.once('error', error => {
-      finish(() => reject(new Error(`Plugin process could not start: ${error.message}`)))
-    })
+    child.once('error', error => finish(() => reject(new Error(`Plugin process could not start: ${error.message}`))))
     child.once('close', (code, childSignal) => {
       finish(() => {
         if (signal?.aborted) return reject(abortError())
@@ -340,11 +335,39 @@ export async function runOfficialPluginCommand(options, args, { signal, onProgre
   })
 }
 
-async function verifySuccessfulMutation(options, request, before) {
+function profileCompatibilityFailure(detail) {
+  return /ERR_PNPM_PUBLIC_HOIST_PATTERN_DIFF|ERR_PNPM_VIRTUAL_STORE_DIR_MAX_LENGTH_DIFF|unexpected store location|modules directory .* different pnpm/iu.test(detail)
+}
+
+async function runWithRecovery(options, args, context) {
+  try {
+    return await runOfficialPluginCommand(options, args, context)
+  } catch (firstError) {
+    if (context.signal?.aborted) throw firstError
+    const detail = errorDetail(firstError)
+    if (profileCompatibilityFailure(detail)) {
+      context.onProgress?.({ stage: 'repairing', message: 'Reconciling the existing Web profile with the packaged pnpm runtime.' })
+      await runOfficialPluginCommand(options, ['install', '--no-frozen-lockfile'], context)
+      return runOfficialPluginCommand(options, args, context)
+    }
+    const failure = classifyMarketplacePnpmFailure(detail)
+    if (failure.kind === 'release-age' && args[0] === 'add') {
+      context.onProgress?.({ stage: 'retrying', message: 'Retrying this explicit install/update without the release-age gate.' })
+      return runOfficialPluginCommand(options, ['add', '--config.minimumReleaseAge=0', ...args.slice(1)], context)
+    }
+    if (failure.kind === 'transient-network') {
+      context.onProgress?.({ stage: 'retrying', message: 'Network interruption detected; retrying once.' })
+      return runOfficialPluginCommand(options, args, context)
+    }
+    throw firstError
+  }
+}
+
+async function verifySuccessfulMutation(options, spec, before) {
   const after = await readProfileState(options.dshHome)
-  const expected = exactRegistryPluginVersion(request.spec)
+  const expected = exactRegistryPluginVersion(spec)
   let candidates = changedDependencyNames(before, after).filter(name => after.dependencies[name] !== undefined)
-  const registryName = registryPackageName(request.spec)
+  const registryName = registryPackageName(spec)
 
   if (expected !== undefined) {
     const installedVersion = await readInstalledPluginVersion(options.dshHome, expected.name)
@@ -360,7 +383,7 @@ async function verifySuccessfulMutation(options, request, before) {
   }
 
   if (candidates.length === 0) {
-    throw new Error('dsh plugin exited successfully but no installed plugin dependency could be verified.')
+    throw new Error('dsh plugin completed but no installed plugin dependency could be verified.')
   }
   const surfaces = []
   for (const name of candidates) surfaces.push(await validateInstalledPlugin(options.dshHome, name))
@@ -371,7 +394,17 @@ async function verifySuccessfulMutation(options, request, before) {
   }
 }
 
-/** Execute one real install/update transaction through upstream DSH. */
+function mutationResult(spec, verified) {
+  return {
+    installed: spec,
+    installedNames: verified.names,
+    surfaces: verified.surfaces,
+    ...(verified.installedVersion === undefined ? {} : { installedVersion: verified.installedVersion }),
+    restartRequired: true,
+  }
+}
+
+/** Install/update through official DSH and judge success from the resulting profile, not stderr alone. */
 export async function executePluginMutation(options, request, {
   approvedPackages = [],
   signal,
@@ -388,11 +421,22 @@ export async function executePluginMutation(options, request, {
   onProgress?.({ stage: 'starting', message: mode === 'update' ? `Updating ${spec}` : `Installing ${spec}` })
 
   try {
-    await runOfficialPluginCommand(options, ['add', spec], { signal, onProgress })
+    await runWithRecovery(options, ['add', spec], { signal, onProgress })
   } catch (error) {
     if (error?.name === 'AbortError') throw error
+
+    // pnpm/DSH can emit a non-zero result after materializing a usable package.
+    // Treat the disk/profile result as authoritative before reporting failure.
+    try {
+      const verified = await verifySuccessfulMutation(options, spec, before)
+      return mutationResult(spec, verified)
+    } catch {
+      // The operation did not produce a usable plugin; handle the real failure below.
+    }
+
     const detail = errorDetail(error)
     const blocked = parseBlockedBuildPackages(detail)
+    await restoreProfileState(options.dshHome, before).catch(() => {})
     if (blocked.length > 0 && approvedPackages.length === 0) {
       return {
         restartRequired: false,
@@ -403,14 +447,8 @@ export async function executePluginMutation(options, request, {
   }
 
   onProgress?.({ stage: 'verifying', message: 'Verifying the installed DSH package and profile registration.' })
-  const verified = await verifySuccessfulMutation(options, { spec, mode }, before)
-  return {
-    installed: spec,
-    installedNames: verified.names,
-    surfaces: verified.surfaces,
-    ...(verified.installedVersion === undefined ? {} : { installedVersion: verified.installedVersion }),
-    restartRequired: true,
-  }
+  const verified = await verifySuccessfulMutation(options, spec, before)
+  return mutationResult(spec, verified)
 }
 
 function normalizeJobRequest(value) {
@@ -442,10 +480,7 @@ function publicJob(job) {
   }
 }
 
-/**
- * Host-owned installer job. Renderer/settings lifetime never owns the child
- * process; closing Settings only stops polling the snapshot.
- */
+/** Host-owned job: closing Settings stops polling, never the package process. */
 export function createPluginInstallerService(optionsFactory, { executor = executePluginMutation } = {}) {
   let current
   let sequence = 0
@@ -543,6 +578,10 @@ export function createPluginInstallerService(optionsFactory, { executor = execut
     },
     cancelActive() {
       if (current !== undefined && ACTIVE_STATES.has(current.state)) this.cancel(current.id)
+    },
+    async shutdown() {
+      if (current !== undefined && ACTIVE_STATES.has(current.state)) this.cancel(current.id)
+      await current?.promise?.catch(() => {})
     },
   }
 }
