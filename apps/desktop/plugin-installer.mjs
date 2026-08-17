@@ -18,6 +18,8 @@ const execFileAsync = promisify(execFile)
 const INSTALL_TIMEOUT_MS = 15 * 60 * 1000
 const OUTPUT_LIMIT_BYTES = 4 * 1024 * 1024
 const PROGRESS_LINE_LIMIT = 260
+const NETWORK_RETRY_FETCH_TIMEOUT_MS = 5 * 60 * 1000
+const NETWORK_RETRY_FETCH_RETRIES = 3
 const ACTIVE_STATES = new Set(['running', 'approval-required'])
 
 function webProfileDir(dshHome) {
@@ -361,28 +363,67 @@ function hoistFailure(detail) {
   return /ERR_PNPM_PUBLIC_HOIST_PATTERN_DIFF|ERR_PNPM_VIRTUAL_STORE_DIR_MAX_LENGTH_DIFF|modules directory .* different pnpm|unexpected store location/iu.test(detail)
 }
 
+/** Add bounded one-shot pnpm fetch settings without changing the user's persistent pnpm configuration. */
+export function pluginNetworkRetryArgs(args) {
+  if (!Array.isArray(args) || args.length === 0) return args
+  const tail = args.slice(1).filter(arg =>
+    typeof arg !== 'string'
+    || (!arg.startsWith('--config.fetchTimeout=') && !arg.startsWith('--config.fetchRetries=')))
+  return [
+    args[0],
+    `--config.fetchTimeout=${NETWORK_RETRY_FETCH_TIMEOUT_MS}`,
+    `--config.fetchRetries=${NETWORK_RETRY_FETCH_RETRIES}`,
+    ...tail,
+  ]
+}
+
+/** Recognize pnpm network errors plus Node/undici fetch timeouts seen while downloading GitHub tarballs. */
+export function isPluginNetworkFailureDetail(detail) {
+  if (classifyMarketplacePnpmFailure(detail).kind === 'transient-network') return true
+  return /(?:TimeoutError[\s\S]{0,500}(?:operation was aborted due to timeout|fetch|request|connect)|UND_ERR_(?:CONNECT_)?TIMEOUT|ERR_PNPM_FETCH_TIMEOUT)/iu.test(detail)
+}
+
 async function runWithRecovery(options, args, context) {
   const run = commandArgs => runOfficialPluginCommand(options, commandArgs, context)
-  try {
-    return await run(args)
-  } catch (firstError) {
-    if (context.signal?.aborted) throw firstError
-    const detail = errorDetail(firstError)
-    if (hoistFailure(detail)) {
-      context.onProgress?.({ stage: 'repairing', message: 'Rebuilding the Web profile package store once, then retrying.' })
-      await run(['install', '--no-frozen-lockfile'])
-      return await run(args)
+  let commandArgs = [...args]
+  let storeRepaired = false
+  let releaseAgeRetried = false
+  let networkRetried = false
+
+  while (true) {
+    try {
+      return await run(commandArgs)
+    } catch (error) {
+      if (context.signal?.aborted) throw error
+      const detail = errorDetail(error)
+
+      if (!storeRepaired && hoistFailure(detail)) {
+        storeRepaired = true
+        context.onProgress?.({ stage: 'repairing', message: 'Rebuilding the Web profile package store once, then retrying.' })
+        await run(['install', '--no-frozen-lockfile'])
+        continue
+      }
+
+      const failure = classifyMarketplacePnpmFailure(detail)
+      if (!releaseAgeRetried && failure.kind === 'release-age' && args[0] === 'add') {
+        releaseAgeRetried = true
+        const minimumReleaseAgeFlag = '--config.minimumReleaseAge=0'
+        if (!commandArgs.includes(minimumReleaseAgeFlag)) {
+          commandArgs = [commandArgs[0], minimumReleaseAgeFlag, ...commandArgs.slice(1)]
+        }
+        context.onProgress?.({ stage: 'retrying', message: 'Retrying this explicit install/update with a one-shot release-age override.' })
+        continue
+      }
+
+      if (!networkRetried && isPluginNetworkFailureDetail(detail)) {
+        networkRetried = true
+        commandArgs = pluginNetworkRetryArgs(commandArgs)
+        context.onProgress?.({ stage: 'retrying', message: 'Network timeout detected; retrying once with a longer pnpm fetch timeout.' })
+        continue
+      }
+
+      throw error
     }
-    const failure = classifyMarketplacePnpmFailure(detail)
-    if (failure.kind === 'release-age' && args[0] === 'add') {
-      context.onProgress?.({ stage: 'retrying', message: 'Retrying this explicit install/update with a one-shot release-age override.' })
-      return await run([args[0], '--config.minimumReleaseAge=0', ...args.slice(1)])
-    }
-    if (failure.kind === 'transient-network') {
-      context.onProgress?.({ stage: 'retrying', message: 'Network interruption detected; retrying once.' })
-      return await run(args)
-    }
-    throw firstError
   }
 }
 
