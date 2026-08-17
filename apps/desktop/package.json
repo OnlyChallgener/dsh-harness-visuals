@@ -13,6 +13,7 @@
     "start": "pnpm run prepare:runtime && pnpm run prepare:electron && electron .",
     "test": "node --test test/*.test.mjs",
     "test:plugin-runtime": "npm install --omit=dev --no-audit --no-fund --prefix runtime && node --test test/plugin-runtime.integration.mjs",
+    "test:plugin-runtime:real": "npm install --omit=dev --no-audit --no-fund --prefix runtime && node --test test/plugin-runtime.real.integration.mjs",
     "dist:win": "pnpm run build:workspace && pnpm run dist:win:fast",
     "dist:win:fast": "pnpm run prepare:runtime && electron-builder --win nsis --x64"
   },
