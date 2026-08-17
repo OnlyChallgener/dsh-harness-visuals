@@ -30,7 +30,7 @@ test('desktop packages one pinned pnpm runtime and exposes no legacy install bri
   const winLauncher = await readFile(new URL('../runtime/bin/pnpm.cmd', import.meta.url), 'utf8')
   const posixLauncher = await readFile(new URL('../runtime/bin/pnpm', import.meta.url), 'utf8')
 
-  assert.equal(runtimePkg.dependencies.pnpm, '11.8.0')
+  assert.equal(runtimePkg.dependencies.pnpm, '11.21.0')
   assert.ok(pkg.build.extraResources[0].filter.includes('bin/**/*'))
   assert.doesNotMatch(preload, /pluginMarketplaceInstall:/)
   assert.match(preload, /desktop:plugin-marketplace-job-environment/)
