@@ -7,7 +7,7 @@ contextBridge.exposeInMainWorld('desktop', {
   copyText: text => ipcRenderer.invoke('desktop:copy-text', text),
   saveImage: (data, mediaType, fileName) => ipcRenderer.invoke('desktop:save-image', { data, mediaType, fileName }),
   ocrImage: (data, mediaType) => ipcRenderer.invoke('desktop:ocr-image', { data, mediaType }),
-  pluginMarketplaceEnvironment: () => ipcRenderer.invoke('desktop:plugin-marketplace-environment'),
+  pluginMarketplaceEnvironment: () => ipcRenderer.invoke('desktop:plugin-marketplace-job-environment'),
   pluginMarketplaceList: () => ipcRenderer.invoke('desktop:plugin-marketplace-list'),
   pluginMarketplaceRemove: name => ipcRenderer.invoke('desktop:plugin-marketplace-remove', name),
   pluginMarketplaceJobStart: request => ipcRenderer.invoke('desktop:plugin-marketplace-job-start', request),
