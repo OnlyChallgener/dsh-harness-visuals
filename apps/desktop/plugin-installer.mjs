@@ -205,9 +205,7 @@ export async function validateInstalledPlugin(dshHome, name) {
   const entries = rootExportCandidates(manifest)
   if (entries.length > 0) {
     const present = await Promise.all(entries.map(candidate => pathExists(join(installed.directory, candidate))))
-    if (!present.some(Boolean)) {
-      throw new Error(`Installed plugin ${safeName} is missing its declared runtime entry.`)
-    }
+    if (!present.some(Boolean)) throw new Error(`Installed plugin ${safeName} is missing its declared runtime entry.`)
   }
 
   const patch = manifest.dsh?.bundle?.patch
@@ -382,9 +380,7 @@ async function verifySuccessfulMutation(options, spec, before) {
     candidates = [registryName]
   }
 
-  if (candidates.length === 0) {
-    throw new Error('dsh plugin completed but no installed plugin dependency could be verified.')
-  }
+  if (candidates.length === 0) throw new Error('dsh plugin completed but no installed plugin dependency could be verified.')
   const surfaces = []
   for (const name of candidates) surfaces.push(await validateInstalledPlugin(options.dshHome, name))
   return {
@@ -404,12 +400,7 @@ function mutationResult(spec, verified) {
   }
 }
 
-/** Install/update through official DSH and judge success from the resulting profile, not stderr alone. */
-export async function executePluginMutation(options, request, {
-  approvedPackages = [],
-  signal,
-  onProgress,
-} = {}) {
+async function executeInstallOrUpdate(options, request, context) {
   const spec = pluginSpec(request.spec)
   const mode = request.mode === 'update' ? 'update' : 'install'
   if (mode === 'update' && exactRegistryPluginVersion(spec) === undefined) {
@@ -417,45 +408,70 @@ export async function executePluginMutation(options, request, {
   }
 
   const before = await readProfileState(options.dshHome)
-  if (approvedPackages.length > 0) await updateAllowBuilds(options.dshHome, approvedPackages)
-  onProgress?.({ stage: 'starting', message: mode === 'update' ? `Updating ${spec}` : `Installing ${spec}` })
+  if (context.approvedPackages.length > 0) await updateAllowBuilds(options.dshHome, context.approvedPackages)
+  context.onProgress?.({ stage: 'starting', message: mode === 'update' ? `Updating ${spec}` : `Installing ${spec}` })
 
   try {
-    await runWithRecovery(options, ['add', spec], { signal, onProgress })
+    await runWithRecovery(options, ['add', spec], context)
   } catch (error) {
     if (error?.name === 'AbortError') throw error
+    const detail = errorDetail(error)
+    const blocked = parseBlockedBuildPackages(detail)
 
-    // pnpm/DSH can emit a non-zero result after materializing a usable package.
-    // Treat the disk/profile result as authoritative before reporting failure.
+    if (blocked.length > 0) {
+      await restoreProfileState(options.dshHome, before).catch(() => {})
+      if (context.approvedPackages.length === 0) {
+        return {
+          restartRequired: false,
+          approvalRequired: { kind: 'build-scripts', packages: blocked },
+        }
+      }
+      throw new Error(detail)
+    }
+
+    // Some package-manager failures are reported after the usable dependency
+    // and DSH profile layer have already landed. Verify the real result before
+    // turning a successful install into a false error.
     try {
       const verified = await verifySuccessfulMutation(options, spec, before)
       return mutationResult(spec, verified)
     } catch {
-      // The operation did not produce a usable plugin; handle the real failure below.
+      await restoreProfileState(options.dshHome, before).catch(() => {})
+      throw new Error(detail)
     }
-
-    const detail = errorDetail(error)
-    const blocked = parseBlockedBuildPackages(detail)
-    await restoreProfileState(options.dshHome, before).catch(() => {})
-    if (blocked.length > 0 && approvedPackages.length === 0) {
-      return {
-        restartRequired: false,
-        approvalRequired: { kind: 'build-scripts', packages: blocked },
-      }
-    }
-    throw new Error(detail)
   }
 
-  onProgress?.({ stage: 'verifying', message: 'Verifying the installed DSH package and profile registration.' })
-  const verified = await verifySuccessfulMutation(options, spec, before)
-  return mutationResult(spec, verified)
+  context.onProgress?.({ stage: 'verifying', message: 'Verifying the installed DSH package and profile registration.' })
+  return mutationResult(spec, await verifySuccessfulMutation(options, spec, before))
+}
+
+async function executeRemove(options, request, context) {
+  const name = pluginPackageName(request.spec)
+  context.onProgress?.({ stage: 'starting', message: `Removing ${name}` })
+  await runWithRecovery(options, ['remove', name], context)
+  const after = await readProfileState(options.dshHome)
+  if (after.dependencies[name] !== undefined || after.bundles.includes(name)) {
+    throw new Error(`dsh plugin remove completed but ${name} is still registered in the Web profile.`)
+  }
+  return { removed: name, restartRequired: true }
+}
+
+/** Execute every marketplace mutation through the same official DSH command path. */
+export async function executePluginMutation(options, request, {
+  approvedPackages = [],
+  signal,
+  onProgress,
+} = {}) {
+  const context = { approvedPackages, signal, onProgress }
+  if (request.mode === 'remove') return executeRemove(options, request, context)
+  return executeInstallOrUpdate(options, request, context)
 }
 
 function normalizeJobRequest(value) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid plugin job request.')
-  const spec = pluginSpec(value.spec)
-  const mode = value.mode === 'update' ? 'update' : value.mode === 'install' ? 'install' : undefined
+  const mode = value.mode === 'update' ? 'update' : value.mode === 'install' ? 'install' : value.mode === 'remove' ? 'remove' : undefined
   if (mode === undefined) throw new Error('Invalid plugin job mode.')
+  const spec = mode === 'remove' ? pluginPackageName(value.spec) : pluginSpec(value.spec)
   if (mode === 'update' && exactRegistryPluginVersion(spec) === undefined) {
     throw new Error('Marketplace updates require an exact npm package version.')
   }
