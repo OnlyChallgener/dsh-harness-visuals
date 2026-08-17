@@ -33,7 +33,7 @@ describe('desktopMarketplaceApi', () => {
       updatedAt: Date.now(),
       approvalRequired: { kind: 'build-scripts', packages: ['native-addon'] },
     }
-    const cancel = vi.fn(async (id: string) => {
+    const cancel = vi.fn(async (_id: string) => {
       current = { ...current, state: 'cancelled', stage: 'cancelled', updatedAt: Date.now() }
       return current
     })
