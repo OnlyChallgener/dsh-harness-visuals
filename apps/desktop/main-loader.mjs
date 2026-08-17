@@ -12,5 +12,11 @@ if (userDataOverride) {
   app.setPath('userData', isolatedUserData)
 }
 
+// A malformed optional machine-wide patch must not brick the whole Desktop.
+// Validate it through DSH's own parser and preserve the invalid file before
+// the Harness process is launched; valid user patches are never touched.
+const { quarantineInvalidHomePatch } = await import('./startup-profile-guard.mjs')
+await quarantineInvalidHomePatch()
+
 await import('./plugin-installer-ipc.mjs')
 await import('./main.mjs')
