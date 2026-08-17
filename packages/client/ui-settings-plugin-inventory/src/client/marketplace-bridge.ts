@@ -38,14 +38,16 @@ export interface MarketplaceMutationResult {
   installed?: string
   installedVersion?: string
   installedNames?: string[]
+  removed?: string
 }
 
 export type MarketplaceJobState = 'running' | 'approval-required' | 'succeeded' | 'failed' | 'cancelled'
+export type MarketplaceJobMode = 'install' | 'update' | 'remove'
 
 export interface MarketplaceInstallerJob {
   id: string
   spec: string
-  mode: 'install' | 'update'
+  mode: MarketplaceJobMode
   state: MarketplaceJobState
   stage: string
   message: string
@@ -59,7 +61,7 @@ export interface MarketplaceInstallerJob {
 
 interface MarketplaceJobRequest {
   spec: string
-  mode: 'install' | 'update'
+  mode: MarketplaceJobMode
 }
 
 export interface PluginMarketplaceApi {
@@ -76,7 +78,6 @@ export interface PluginMarketplaceApi {
 interface DesktopBridge {
   pluginMarketplaceEnvironment?: () => Promise<MarketplaceEnvironment>
   pluginMarketplaceList?: () => Promise<MarketplacePlugin[]>
-  pluginMarketplaceRemove?: (name: string) => Promise<MarketplaceMutationResult>
   pluginMarketplaceJobStart?: (request: MarketplaceJobRequest) => Promise<MarketplaceInstallerJob>
   pluginMarketplaceJobStatus?: () => Promise<MarketplaceInstallerJob | undefined>
   pluginMarketplaceJobApprove?: (id: string) => Promise<MarketplaceInstallerJob>
@@ -97,7 +98,6 @@ export function desktopMarketplaceApi(): PluginMarketplaceApi | undefined {
   const desktop = candidate as DesktopBridge
   const environment = desktop.pluginMarketplaceEnvironment
   const list = desktop.pluginMarketplaceList
-  const remove = desktop.pluginMarketplaceRemove
   const startJob = desktop.pluginMarketplaceJobStart
   const statusJob = desktop.pluginMarketplaceJobStatus
   const approveJob = desktop.pluginMarketplaceJobApprove
@@ -105,7 +105,6 @@ export function desktopMarketplaceApi(): PluginMarketplaceApi | undefined {
   const restart = desktop.restart
   if (typeof environment !== 'function'
     || typeof list !== 'function'
-    || typeof remove !== 'function'
     || typeof startJob !== 'function'
     || typeof statusJob !== 'function'
     || typeof approveJob !== 'function'
@@ -131,12 +130,13 @@ export function desktopMarketplaceApi(): PluginMarketplaceApi | undefined {
 
   const runJob = async (
     spec: string,
-    mode: 'install' | 'update',
+    mode: MarketplaceJobMode,
     approveBuilds: boolean,
   ): Promise<MarketplaceMutationResult> => {
     const current = await statusJob()
     if (approveBuilds) {
-      if (current === undefined
+      if (mode === 'remove'
+        || current === undefined
         || current.spec !== spec
         || current.mode !== mode
         || current.state !== 'approval-required') {
@@ -162,7 +162,7 @@ export function desktopMarketplaceApi(): PluginMarketplaceApi | undefined {
     list: () => list(),
     install: (spec, approveBuilds = false) => runJob(spec, 'install', approveBuilds),
     update: (spec, approveBuilds = false) => runJob(spec, 'update', approveBuilds),
-    remove: name => remove(name),
+    remove: name => runJob(name, 'remove', false),
     jobStatus: () => statusJob(),
     cancelJob: id => cancelJob(id),
     restart: async () => { await restart() },
