@@ -5,6 +5,7 @@ import type { PluginInventoryLocaleKey } from './locales.ts'
 import { MarketplaceCatalogPanel } from './MarketplaceCatalogPanel.tsx'
 import type {
   MarketplaceEnvironment,
+  MarketplaceInstallerJob,
   MarketplaceMutationResult,
   MarketplacePlugin,
   MarketplacePluginProvenance,
@@ -68,6 +69,12 @@ function updateLocale(status: MarketplaceUpdateStatus | undefined): PluginInvent
   return 'marketplaceUpdateManual'
 }
 
+function hostJobLocale(job: MarketplaceInstallerJob): PluginInventoryLocaleKey {
+  if (job.mode === 'update') return 'marketplaceUpdating'
+  if (job.mode === 'remove') return 'marketplaceRemoving'
+  return 'marketplaceInstalling'
+}
+
 function operationErrorDetail(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error)
   const normalized = raw.replace(/\s+/gu, ' ').trim()
@@ -76,6 +83,7 @@ function operationErrorDetail(error: unknown): string {
 }
 
 async function mutationWithBuildApproval(
+  api: PluginMarketplaceApi,
   run: (approveBuilds: boolean) => Promise<MarketplaceMutationResult>,
   t: PluginMarketplaceSettingsTabProps['t'],
 ): Promise<MarketplaceMutationResult | undefined> {
@@ -85,9 +93,15 @@ async function mutationWithBuildApproval(
   const approved = globalThis.confirm(
     `${t('marketplaceBuildApprovalTitle')}\n\n${t('marketplaceBuildApprovalBody')}\n\n${packages.map(name => `• ${name}`).join('\n')}`,
   )
-  if (!approved) return undefined
+  if (!approved) {
+    const pending = await api.jobStatus?.().catch(() => undefined)
+    if (pending?.state === 'approval-required') await api.cancelJob?.(pending.id).catch(() => undefined)
+    return undefined
+  }
   result = await run(true)
   if (result.approvalRequired !== undefined) {
+    const pending = await api.jobStatus?.().catch(() => undefined)
+    if (pending?.state === 'approval-required') await api.cancelJob?.(pending.id).catch(() => undefined)
     throw new Error(t('marketplaceBuildApprovalRetryFailed'))
   }
   return result
@@ -203,6 +217,7 @@ export function PluginMarketplaceSettingsTab({ api, t }: PluginMarketplaceSettin
   const [plugins, setPlugins] = useState<MarketplacePlugin[]>([])
   const [spec, setSpec] = useState('')
   const [operation, setOperation] = useState<string>()
+  const [hostJob, setHostJob] = useState<MarketplaceInstallerJob>()
   const [operationError, setOperationError] = useState<string>()
   const [refreshError, setRefreshError] = useState(false)
   const [restartRequired, setRestartRequired] = useState(false)
@@ -247,14 +262,65 @@ export function PluginMarketplaceSettingsTab({ api, t }: PluginMarketplaceSettin
     return () => { current = false }
   }, [api])
 
+  useEffect(() => {
+    if (api?.jobStatus === undefined) return
+    let current = true
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let observedActiveJob = false
+
+    const poll = async (): Promise<void> => {
+      try {
+        const job = await api.jobStatus!()
+        if (!current) return
+
+        if (job?.state === 'approval-required' && operation === undefined) {
+          // Approval prompts belong to the page that requested them. If that
+          // page was left before the decision, there is no package process to
+          // preserve, so release the orphan instead of blocking the market.
+          await api.cancelJob?.(job.id).catch(() => undefined)
+          if (!current) return
+          setHostJob(undefined)
+          return
+        }
+
+        if (job?.state === 'running' || job?.state === 'approval-required') {
+          observedActiveJob = true
+          setHostJob(job)
+          timer = setTimeout(() => { void poll() }, 400)
+          return
+        }
+
+        setHostJob(undefined)
+        if (!observedActiveJob || job === undefined) return
+        if (job.state === 'succeeded') {
+          setRestartRequired(value => value || job.result?.restartRequired === true)
+          try { setPlugins(await api.list()) } catch { /* keep the existing local snapshot */ }
+        } else if (job.state === 'failed') {
+          setOperationError(operationErrorDetail(job.error ?? job.message))
+        }
+      } catch {
+        if (current && observedActiveJob) timer = setTimeout(() => { void poll() }, 1_000)
+      }
+    }
+
+    void poll()
+    return () => {
+      current = false
+      if (timer !== undefined) clearTimeout(timer)
+    }
+  }, [api, operation])
+
+  const hostBusy = hostJob?.state === 'running' || hostJob?.state === 'approval-required'
+  const busy = operation !== undefined || hostBusy
+
   const install = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault()
     const value = spec.trim()
-    if (api === undefined || environment?.pnpmAvailable !== true || value.length === 0 || operation !== undefined) return
+    if (api === undefined || environment?.pnpmAvailable !== true || value.length === 0 || busy) return
     setOperation('install')
     setOperationError(undefined)
     try {
-      const result = await mutationWithBuildApproval(approve => api.install(value, approve), t)
+      const result = await mutationWithBuildApproval(api, approve => api.install(value, approve), t)
       if (result === undefined) return
       setRestartRequired(current => current || result.restartRequired)
       setSpec('')
@@ -267,10 +333,10 @@ export function PluginMarketplaceSettingsTab({ api, t }: PluginMarketplaceSettin
   }
 
   const installCatalog = (value: string, id: string): void => {
-    if (api === undefined || environment?.pnpmAvailable !== true || operation !== undefined) return
+    if (api === undefined || environment?.pnpmAvailable !== true || busy) return
     setOperation(`catalog:${id}`)
     setOperationError(undefined)
-    void mutationWithBuildApproval(approve => api.install(value, approve), t).then(
+    void mutationWithBuildApproval(api, approve => api.install(value, approve), t).then(
       async (result) => {
         if (result === undefined) return
         setRestartRequired(current => current || result.restartRequired)
@@ -281,10 +347,10 @@ export function PluginMarketplaceSettingsTab({ api, t }: PluginMarketplaceSettin
   }
 
   const update = (plugin: MarketplacePlugin): void => {
-    if (api === undefined || environment?.pnpmAvailable !== true || operation !== undefined || plugin.updateSpec === undefined) return
+    if (api === undefined || environment?.pnpmAvailable !== true || busy || plugin.updateSpec === undefined) return
     setOperation(`update:${plugin.name}`)
     setOperationError(undefined)
-    void mutationWithBuildApproval(approve => api.update(plugin.updateSpec!, approve), t).then(
+    void mutationWithBuildApproval(api, approve => api.update(plugin.updateSpec!, approve), t).then(
       async (result) => {
         if (result === undefined) return
         setRestartRequired(current => current || result.restartRequired)
@@ -301,7 +367,7 @@ export function PluginMarketplaceSettingsTab({ api, t }: PluginMarketplaceSettin
   }
 
   const remove = (name: string): void => {
-    if (api === undefined || environment?.pnpmAvailable !== true || operation !== undefined) return
+    if (api === undefined || environment?.pnpmAvailable !== true || busy) return
     setOperation(`remove:${name}`)
     setOperationError(undefined)
     void api.remove(name).then(
@@ -327,7 +393,7 @@ export function PluginMarketplaceSettingsTab({ api, t }: PluginMarketplaceSettin
   const pnpmReady = environment?.pnpmAvailable === true
 
   return (
-    <div className={css.section} aria-busy={phase === 'loading'}>
+    <div className={css.section} aria-busy={phase === 'loading' || busy}>
       <div className={css.hero}>
         <div>
           <h3>{t('marketplaceTitle')}</h3>
@@ -385,6 +451,13 @@ export function PluginMarketplaceSettingsTab({ api, t }: PluginMarketplaceSettin
         </div>
       ) : null}
 
+      {hostBusy && operation === undefined && hostJob !== undefined ? (
+        <div className={css.warning} role="status">
+          <strong>{t(hostJobLocale(hostJob))}</strong>
+          <span>{hostJob.spec}</span>
+        </div>
+      ) : null}
+
       {operationError !== undefined ? (
         <p className={css.operationError} role="alert">
           {t('marketplaceOperationError')} {' '}{operationError}
@@ -401,7 +474,7 @@ export function PluginMarketplaceSettingsTab({ api, t }: PluginMarketplaceSettin
             <button
               className={css.secondaryButton}
               type="button"
-              disabled={operation !== undefined}
+              disabled={busy}
               onClick={() => { void load() }}
             >
               {t('marketplaceRefresh')}
@@ -414,7 +487,7 @@ export function PluginMarketplaceSettingsTab({ api, t }: PluginMarketplaceSettin
                 <InstalledPlugin
                   key={plugin.name}
                   plugin={plugin}
-                  disabled={!pnpmReady || operation !== undefined}
+                  disabled={!pnpmReady || busy}
                   operation={operation}
                   update={update}
                   remove={remove}
@@ -431,7 +504,7 @@ export function PluginMarketplaceSettingsTab({ api, t }: PluginMarketplaceSettin
           <MarketplaceCatalogPanel
             installed={plugins}
             pnpmReady={pnpmReady}
-            disabled={operation !== undefined}
+            disabled={busy}
             operation={operation}
             onInstall={installCatalog}
             t={t}
@@ -452,7 +525,7 @@ export function PluginMarketplaceSettingsTab({ api, t }: PluginMarketplaceSettin
               <input
                 id="plugin-marketplace-spec"
                 value={spec}
-                disabled={!pnpmReady || operation !== undefined}
+                disabled={!pnpmReady || busy}
                 placeholder={t('marketplaceInstallPlaceholder')}
                 autoComplete="off"
                 spellCheck={false}
@@ -461,7 +534,7 @@ export function PluginMarketplaceSettingsTab({ api, t }: PluginMarketplaceSettin
               <button
                 className={css.primaryButton}
                 type="submit"
-                disabled={!pnpmReady || operation !== undefined || spec.trim().length === 0}
+                disabled={!pnpmReady || busy || spec.trim().length === 0}
               >
                 {operation === 'install' ? t('marketplaceInstalling') : t('marketplaceInstall')}
               </button>
@@ -480,7 +553,7 @@ export function PluginMarketplaceSettingsTab({ api, t }: PluginMarketplaceSettin
           <button
             className={css.primaryButton}
             type="button"
-            disabled={operation !== undefined}
+            disabled={busy}
             onClick={() => { void api.restart() }}
           >
             {t('marketplaceRestart')}
