@@ -72,6 +72,6 @@ for (const overlay of runtimeOverlays) {
 // machine. `npm install --prefix runtime` installs this pinned pnpm package;
 // the Desktop exposes it through runtime/bin instead of depending on a global
 // pnpm/npm/corepack installation.
-await access(runtimePath('node_modules', 'pnpm', 'bin', 'pnpm.cjs'))
+await access(runtimePath('node_modules', 'pnpm', 'bin', 'pnpm.mjs'))
 await access(runtimePath('bin', process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'))
 if (process.platform !== 'win32') await chmod(runtimePath('bin', 'pnpm'), 0o755)
