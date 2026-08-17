@@ -133,7 +133,7 @@ export function desktopMarketplaceApi(): PluginMarketplaceApi | undefined {
     mode: MarketplaceJobMode,
     approveBuilds: boolean,
   ): Promise<MarketplaceMutationResult> => {
-    const current = await statusJob()
+    let current = await statusJob()
     if (approveBuilds) {
       if (mode === 'remove'
         || current === undefined
@@ -144,6 +144,15 @@ export function desktopMarketplaceApi(): PluginMarketplaceApi | undefined {
       }
       const resumed = await approveJob(current.id)
       return waitForJob(resumed.id)
+    }
+
+    if (current !== undefined && current.state === 'approval-required'
+      && (current.spec !== spec || current.mode !== mode)) {
+      // A declined/abandoned approval has no package process running and must
+      // not lock the whole marketplace forever. Cancel it before starting the
+      // next explicit user operation.
+      await cancelJob(current.id)
+      current = await statusJob()
     }
 
     if (current !== undefined && (current.state === 'running' || current.state === 'approval-required')) {
