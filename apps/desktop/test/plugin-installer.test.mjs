@@ -4,6 +4,8 @@ import { setTimeout as delay } from 'node:timers/promises'
 import test from 'node:test'
 import {
   createPluginInstallerService,
+  isPluginNetworkFailureDetail,
+  pluginNetworkRetryArgs,
   rewriteAllowBuildsDocument,
 } from '../plugin-installer.mjs'
 
@@ -38,6 +40,23 @@ test('repairs pnpm allowBuilds placeholders and quotes scoped package keys', () 
   assert.match(after, /allowBuilds:\n  '@scope\/native-addon': true\n  cpu-features: true\n  ssh2: true\nminimumReleaseAge: 1440/)
   assert.doesNotMatch(after, /set this to true or false/)
   assert.equal((after.match(/ssh2:/g) ?? []).length, 1)
+})
+
+test('recognizes Node fetch timeouts and composes a one-shot pnpm network retry', () => {
+  const timeout = '{"err":{"name":"TimeoutError","message":"The operation was aborted due to timeout","code":23}}'
+  assert.equal(isPluginNetworkFailureDetail(timeout), true)
+
+  const spec = 'github:Small-tailqwq/dsh-deep-whale#path:/maid-atelier'
+  assert.deepEqual(
+    pluginNetworkRetryArgs(['add', '--config.minimumReleaseAge=0', spec]),
+    [
+      'add',
+      '--config.fetchTimeout=300000',
+      '--config.fetchRetries=3',
+      '--config.minimumReleaseAge=0',
+      spec,
+    ],
+  )
 })
 
 test('host-owned plugin job survives callers and resumes the same approval job', async () => {
