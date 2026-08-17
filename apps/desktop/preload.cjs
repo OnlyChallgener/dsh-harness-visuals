@@ -9,7 +9,6 @@ contextBridge.exposeInMainWorld('desktop', {
   ocrImage: (data, mediaType) => ipcRenderer.invoke('desktop:ocr-image', { data, mediaType }),
   pluginMarketplaceEnvironment: () => ipcRenderer.invoke('desktop:plugin-marketplace-job-environment'),
   pluginMarketplaceList: () => ipcRenderer.invoke('desktop:plugin-marketplace-list'),
-  pluginMarketplaceRemove: name => ipcRenderer.invoke('desktop:plugin-marketplace-remove', name),
   pluginMarketplaceJobStart: request => ipcRenderer.invoke('desktop:plugin-marketplace-job-start', request),
   pluginMarketplaceJobStatus: () => ipcRenderer.invoke('desktop:plugin-marketplace-job-status'),
   pluginMarketplaceJobApprove: id => ipcRenderer.invoke('desktop:plugin-marketplace-job-approve', id),
