@@ -1,5 +1,6 @@
 import { app, ipcMain } from 'electron'
 import { join } from 'node:path'
+import { executeConfigCheckedPluginMutation } from './plugin-config-check.mjs'
 import { createPluginInstallerService } from './plugin-installer.mjs'
 
 function installerOptions() {
@@ -11,7 +12,7 @@ function installerOptions() {
   }
 }
 
-const installer = createPluginInstallerService(installerOptions)
+const installer = createPluginInstallerService(installerOptions, { executor: executeConfigCheckedPluginMutation })
 
 ipcMain.handle('desktop:plugin-marketplace-job-start', (_event, request) => installer.start(request))
 ipcMain.handle('desktop:plugin-marketplace-job-status', () => installer.status())
