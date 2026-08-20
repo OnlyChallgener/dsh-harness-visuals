@@ -194,11 +194,6 @@ test('packages the embedded runtime dependencies and verifies their entry point'
   assert.equal(desktopPackage.build.nsis.differentialPackage, false)
 })
 
-test('packages the Windows OCR runner outside the asar archive', () => {
-  const ocrResource = desktopPackage.build.extraResources.find(resource => resource.from === 'windows-ocr.ps1')
-  assert.equal(ocrResource?.to, 'windows-ocr.ps1')
-})
-
 test('writes clipboard text through clip.exe standard input', async () => {
   let executable
   let spawnOptions

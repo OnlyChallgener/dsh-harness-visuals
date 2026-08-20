@@ -6,7 +6,6 @@ contextBridge.exposeInMainWorld('desktop', {
   copyImage: (data, mediaType) => ipcRenderer.invoke('desktop:copy-image', { data, mediaType }),
   copyText: text => ipcRenderer.invoke('desktop:copy-text', text),
   saveImage: (data, mediaType, fileName) => ipcRenderer.invoke('desktop:save-image', { data, mediaType, fileName }),
-  ocrImage: (data, mediaType) => ipcRenderer.invoke('desktop:ocr-image', { data, mediaType }),
   pluginMarketplaceEnvironment: () => ipcRenderer.invoke('desktop:plugin-marketplace-environment'),
   pluginMarketplaceList: () => ipcRenderer.invoke('desktop:plugin-marketplace-list'),
   pluginMarketplaceInstall: spec => ipcRenderer.invoke('desktop:plugin-marketplace-install', spec),

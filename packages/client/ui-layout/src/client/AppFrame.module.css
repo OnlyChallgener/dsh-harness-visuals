@@ -4,33 +4,10 @@
   grid-template-rows: 100%;
   height: 100%;
   overflow: hidden;
-  background-color: var(--dsw-alias-bg-base);
-  background-image: var(--dsh-wallpaper-image, none);
-  background-position: center;
-  background-repeat: no-repeat;
-  background-size: cover;
+  background: var(--dsw-alias-bg-base);
   /* Collapse/expand animates the tracks on the deepsuite sider curve
      (--ds-ease-in-out / --ds-transition-duration-slow, ui-theme base.css). */
   transition: grid-template-columns var(--ds-transition-duration-slow) var(--ds-ease-in-out);
-}
-
-/*
- * Local wallpaper arbitration. Only the two full-canvas background tokens are
- * made translucent. Cards, dialogs, menus, and overlays keep their ordinary
- * opaque theme surfaces for readability. `!important` is intentional here:
- * third-party skins commonly project token overrides as inline styles, while
- * the built-in wallpaper must stay visually deterministic when enabled. The
- * rule exists only while the local-wallpaper attribute is present, so Reset
- * immediately reveals the previously active third-party theme/wallpaper.
- */
-:global(html[data-dsh-local-wallpaper='true'] body) {
-  --dsw-alias-bg-base: rgba(255, 255, 255, 0.70) !important;
-  --dsw-specific-sidebar-fill: rgba(246, 248, 251, 0.76) !important;
-}
-
-:global(html[data-dsh-local-wallpaper='true'] body[data-ds-dark-theme]) {
-  --dsw-alias-bg-base: rgba(18, 20, 24, 0.72) !important;
-  --dsw-specific-sidebar-fill: rgba(24, 26, 30, 0.76) !important;
 }
 
 /* Dragging writes widths at pointer cadence; easing them would detach the

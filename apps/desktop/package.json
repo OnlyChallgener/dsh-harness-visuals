@@ -65,10 +65,6 @@
       {
         "from": "runtime-launcher.cjs",
         "to": "runtime-launcher.cjs"
-      },
-      {
-        "from": "windows-ocr.ps1",
-        "to": "windows-ocr.ps1"
       }
     ],
     "afterPack": "scripts/verify-packaged-runtime.cjs",

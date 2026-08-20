@@ -1,7 +1,6 @@
 import { execFile, spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { existsSync } from 'node:fs'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { createServer } from 'node:net'
 import { dirname, join } from 'node:path'
@@ -13,7 +12,6 @@ const URL_PATTERN = /http:\/\/127\.0\.0\.1:\d+/u
 const NODE_VERSION_PATTERN = /^v(\d+)\.(\d+)\.(\d+)/u
 const execFileAsync = promisify(execFile)
 const DEFAULT_LAUNCHER_PATH = join(dirname(fileURLToPath(import.meta.url)), 'runtime-launcher.cjs')
-const WINDOWS_OCR_TIMEOUT_MS = 30_000
 const DEFAULT_HARNESS_PORTS = Array.from({ length: 10 }, (_value, index) => 3080 + index)
 const SYSTEM_ENV_KEYS = new Set([
   'ALL_PROXY',
@@ -148,74 +146,6 @@ export function harnessEnvironment(source, dshHome) {
     ...Object.fromEntries(entries),
     DSH_HOME: dshHome,
     ELECTRON_RUN_AS_NODE: '1',
-  }
-}
-
-/** Returns the media-type extension used for a temporary Windows OCR image. */
-function imageExtension(mediaType) {
-  switch (mediaType) {
-    case 'image/jpeg': return '.jpg'
-    case 'image/webp': return '.webp'
-    case 'image/gif': return '.gif'
-    default: return '.png'
-  }
-}
-
-/** Keeps credentials and unrelated application variables out of the OCR process. */
-function windowsOcrEnvironment() {
-  const keys = [
-    'LOCALAPPDATA',
-    'PATH',
-    'PATHEXT',
-    'PROGRAMFILES',
-    'PROGRAMFILES(X86)',
-    'PSMODULEPATH',
-    'SYSTEMDRIVE',
-    'SYSTEMROOT',
-    'TEMP',
-    'TMP',
-    'USERPROFILE',
-    'WINDIR',
-  ]
-  return Object.fromEntries(keys.flatMap(key => {
-    const value = process.env[key]
-    return value === undefined ? [] : [[key, value]]
-  }))
-}
-
-/**
- * Runs the Windows 10/11 built-in OCR engine against one image.
- * @param {{ data: ArrayBuffer, mediaType: string, scriptPath: string, tempDirectory: string }} options - Image bytes and packaged OCR script paths.
- * @returns {Promise<string>} Recognized text, or an empty string when no text is visible.
- */
-export async function runWindowsOcr({ data, mediaType, scriptPath, tempDirectory }) {
-  if (process.platform !== 'win32') throw new Error('Windows OCR is available only on Windows 10/11.')
-  const directory = await mkdtemp(join(tempDirectory, 'dsh-ocr-'))
-  const imagePath = join(directory, `image${imageExtension(mediaType)}`)
-  try {
-    await writeFile(imagePath, Buffer.from(data), { flag: 'wx', mode: 0o600 })
-    const { stdout } = await execFileAsync('powershell.exe', [
-      '-NoProfile',
-      '-NonInteractive',
-      '-ExecutionPolicy',
-      'Bypass',
-      '-File',
-      scriptPath,
-      imagePath,
-    ], {
-      cwd: directory,
-      env: windowsOcrEnvironment(),
-      maxBuffer: 2 * 1024 * 1024,
-      timeout: WINDOWS_OCR_TIMEOUT_MS,
-      windowsHide: true,
-    })
-    return stdout.trim()
-  } finally {
-    try {
-      await rm(directory, { recursive: true, force: true })
-    } catch {
-      // OCR temp cleanup is best effort after the PowerShell process settles.
-    }
   }
 }
 

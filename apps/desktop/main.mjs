@@ -24,7 +24,6 @@ import {
 } from './plugin-marketplace.mjs'
 import {
   checkNodeRuntime,
-  runWindowsOcr,
   selectHarnessPort,
   startHarness,
   stopProcessTree,
@@ -516,18 +515,6 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     if (result.canceled || result.filePath === undefined) return false
     await writeFile(result.filePath, data)
     return true
-  })
-  ipcMain.handle('desktop:ocr-image', async (_event, value) => {
-    const { data, mediaType } = imagePayload(value)
-    const scriptPath = app.isPackaged
-      ? join(process.resourcesPath, 'windows-ocr.ps1')
-      : join(import.meta.dirname, 'windows-ocr.ps1')
-    return runWindowsOcr({
-      data: data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength),
-      mediaType,
-      scriptPath,
-      tempDirectory: app.getPath('temp'),
-    })
   })
   app.on('activate', showMainWindow)
 })

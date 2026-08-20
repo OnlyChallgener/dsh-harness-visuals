@@ -23,11 +23,6 @@ module.exports = Object.freeze([
     markers: [],
   },
   {
-    name: '@deepseek-ai/dsh-client-ui-layout',
-    repoPath: 'packages/client/ui-layout',
-    markers: ['--dsh-wallpaper-image', 'data-dsh-local-wallpaper'],
-  },
-  {
     name: '@deepseek-ai/dsh-client-ui-primitives',
     repoPath: 'packages/client/ui-primitives',
     markers: [],
@@ -36,11 +31,6 @@ module.exports = Object.freeze([
     name: '@deepseek-ai/dsh-client-ui-settings-plugin-inventory',
     repoPath: 'packages/client/ui-settings-plugin-inventory',
     markers: ['marketplaceTitle', 'marketplaceRecommended'],
-  },
-  {
-    name: '@deepseek-ai/dsh-client-ui-theme',
-    repoPath: 'packages/client/ui-theme',
-    markers: ['appearance.wallpaper', 'Choose wallpaper', 'data-dsh-local-wallpaper'],
   },
   {
     name: '@deepseek-ai/dsh-tool-cordis',
