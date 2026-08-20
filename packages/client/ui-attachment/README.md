@@ -2,7 +2,7 @@
 
 English | [中文](README.zh.md)
 
-Pure React attachment atoms (zero cordis): the composer draft-image rail (`AttachmentRail`), the chat-history image gallery (`MessageImage`/`ImageGallery`), the original-image lightbox (`ImageLightbox`), and the full-page drop overlay (`DropOverlay`). Every string arrives through label props resolved by the owning plugin's own locale namespace, and nothing here reads application state; `@deepseek-ai/dsh-client-ui-conversation` is the current consumer, bridging its `conversation` dictionary through its `image-labels` module.
+Dynamic attachment presentation plugin for the conversation UI. It waits for the conversation package's `conversation.input.attachments` and `conversation.message.images` declarations through `ctx.slots.inject`, then registers the composer draft-image rail, document drop target, chat-history image gallery, and original-image lightbox. The conversation slot owner supplies attachment data, image loading, callbacks, and its namespace translator; presentation components remain pure props and are not exported from the package entry.
 
 ## Attachment rail
 
@@ -10,7 +10,7 @@ Pure React attachment atoms (zero cordis): the composer draft-image rail (`Attac
 
 ## Message images and the lightbox
 
-`MessageImage` renders one durable history image, loading a session-authorized URL through the owner's `ImageLoader`; a failed load renders an explicit retry control, and a settled load answers a single click by opening `ImageLightbox` (clicks during loading are ignored). Sizing follows DeepSeek Chat: a message's lone image (`variant="single"`) renders at 240px on its longer edge with the displayed aspect ratio clamped to [0.25, 4] — the overflow is cropped by `object-fit: cover`, anchored to the top of very tall images and the left of very wide ones — and never upscales past its natural size; an image among several (`variant="tile"`) is a fixed 64px square. `ImageGallery` wraps a message's images in one aligned wrapping flex group (`end` for user messages, `start` for assistant messages), picks the variant from the image count, and renders nothing for an empty list. `ImageLightbox` is a document-level modal preview over the shared dialog mask (`--dsw-alias-bg-mask-1` + `--dsw-mask-blur`, painted on its own layer so the blur never touches the previewed image) that closes on Escape, a mask press, or its close control, and restores focus to its opener on unmount. A right-click on either the history thumbnail or lightbox image opens copy and save actions; the desktop host uses its native clipboard and Save dialog, while browser builds use the Clipboard API and download fallback. Windows desktop hosts also expose the built-in OCR action, which copies recognized text to the clipboard.
+`MessageImage` renders one durable history image, loading a session-authorized URL through the owner's `ImageLoader`; a failed load renders an explicit retry control, and a settled load answers a single click by opening `ImageLightbox` (clicks during loading are ignored). Sizing follows DeepSeek Chat: a message's lone image (`variant="single"`) renders at 240px on its longer edge with the displayed aspect ratio clamped to [0.25, 4] — the overflow is cropped by `object-fit: cover`, anchored to the top of very tall images and the left of very wide ones — and never upscales past its natural size; an image among several (`variant="tile"`) is a fixed 64px square. `ImageGallery` wraps a message's images in one aligned wrapping flex group (`end` for user messages, `start` for assistant messages), picks the variant from the image count, and renders nothing for an empty list. `ImageLightbox` is a document-level modal preview over the shared dialog mask (`--dsw-alias-bg-mask-1` + `--dsw-mask-blur`, painted on its own layer so the blur never touches the previewed image) that closes on Escape, a mask press, or its close control, and restores focus to its opener on unmount.
 
 ## Drop overlay
 
@@ -18,7 +18,7 @@ Pure React attachment atoms (zero cordis): the composer draft-image rail (`Attac
 
 ## Model Experience
 
-None, as the package renders pure React atoms in the browser; nothing here reaches a model request.
+None, as the plugin only renders attachment state supplied by the conversation UI and contributes no model-visible input.
 
 #### KV Cache effect
 
@@ -27,5 +27,5 @@ None; this package neither assembles nor sends a provider request.
 ## Known Limitations and Deferred Work
 
 - **Images only** — non-image files have no rail card or history renderer yet; DeepSeek Chat-style file cards and upload-progress states wait until the composer accepts non-image attachments.
-- **No zoom in the lightbox** — the preview renders the original at fit-to-viewport size only.
-- **The lightbox does not trap focus** — it sets `aria-modal` and restores focus on close, but Tab can reach the page behind it (behavior carried over from the pre-package component).
+- **No zoom or download in the lightbox** — the preview renders the original at fit-to-viewport size only.
+- **The lightbox does not trap focus** — it sets `aria-modal` and restores focus on close, but Tab can reach the page behind it.

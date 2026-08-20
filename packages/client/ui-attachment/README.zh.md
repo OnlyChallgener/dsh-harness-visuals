@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文
 
-纯 React 附件原子组件（零 cordis）：输入框草稿图片栏（`AttachmentRail`）、聊天历史图片画廊（`MessageImage`/`ImageGallery`）、原图灯箱（`ImageLightbox`）与整页拖放遮罩（`DropOverlay`）。所有文案都由持有方插件在自己的语言命名空间中解析后经 label props 传入，此包不读取任何应用状态；当前消费者是 `@deepseek-ai/dsh-client-ui-conversation`，经其 `image-labels` 模块桥接 `conversation` 词典。
+对话 UI 的动态附件呈现插件。它通过 `ctx.slots.inject` 等待 conversation 包声明 `conversation.input.attachments` 与 `conversation.message.images`，随后注册输入框草稿图片栏、文档拖放目标、聊天历史图片画廊和原图灯箱。conversation slot 持有方提供附件数据、图片加载、回调及其命名空间翻译器；呈现组件保持纯 props，且不从包入口导出。
 
 ## 附件栏
 
@@ -10,7 +10,7 @@
 
 ## 消息图片与灯箱
 
-`MessageImage` 渲染一张持久化历史图片，经持有方的 `ImageLoader` 加载会话授权 URL；加载失败渲染显式重试按钮，加载完成后单击打开 `ImageLightbox`（加载中的点击被忽略）。尺寸规则对齐 DeepSeek Chat：一条消息仅有的一张图（`variant="single"`）长边 240px、展示宽高比钳制在 [0.25, 4] 之间——超出部分由 `object-fit: cover` 裁切，特别高的图锚定顶部、特别宽的图锚定左侧——且从不放大超过原始尺寸；多图中的一张（`variant="tile"`）为固定 64px 方块。`ImageGallery` 将一条消息的图片包为一个对齐的可换行弹性分组（用户消息 `end`，助手消息 `start`），按图片数量选择 variant，空列表不渲染。`ImageLightbox` 是文档级模态预览，铺在共享的对话框遮罩上（`--dsw-alias-bg-mask-1` 加 `--dsw-mask-blur`，画在独立图层上，模糊不会波及预览图本身），按 Escape、按下遮罩或点关闭按钮均可关闭，卸载时将焦点还给打开者。右键点击历史缩略图或灯箱原图会打开复制和保存操作；桌面端使用系统剪贴板与保存对话框，浏览器构建使用 Clipboard API 和下载回退。Windows 桌面端还提供系统原生 OCR，识别出的文字会复制到剪贴板。
+`MessageImage` 渲染一张持久化历史图片，经持有方的 `ImageLoader` 加载会话授权 URL；加载失败渲染显式重试按钮，加载完成后单击打开 `ImageLightbox`（加载中的点击被忽略）。尺寸规则对齐 DeepSeek Chat：一条消息仅有的一张图（`variant="single"`）长边 240px、展示宽高比钳制在 [0.25, 4] 之间——超出部分由 `object-fit: cover` 裁切，特别高的图锚定顶部、特别宽的图锚定左侧——且从不放大超过原始尺寸；多图中的一张（`variant="tile"`）为固定 64px 方块。`ImageGallery` 将一条消息的图片包为一个对齐的可换行弹性分组（用户消息 `end`，助手消息 `start`），按图片数量选择 variant，空列表不渲染。`ImageLightbox` 是文档级模态预览，铺在共享的对话框遮罩上（`--dsw-alias-bg-mask-1` 加 `--dsw-mask-blur`，画在独立图层上，模糊不会波及预览图本身），按 Escape、按下遮罩或点关闭按钮均可关闭，卸载时将焦点还给打开者。
 
 ## 拖放遮罩
 
@@ -18,7 +18,7 @@
 
 ## 模型体验
 
-无。该包（package）在浏览器中渲染纯 React 原子组件；这里没有任何内容进入模型请求。
+无，因为该插件只渲染由对话 UI 提供的附件状态，不贡献模型可见输入。
 
 #### KV Cache 影响
 
@@ -27,5 +27,5 @@
 ## 已知限制与暂缓事项
 
 - **仅支持图片** — 非图片文件尚无附件栏卡片与历史渲染；DeepSeek Chat 风格的文件卡片和上传进度状态等输入框接受非图片附件后再做。
-- **灯箱无缩放** — 预览仅以适配视口的尺寸渲染原图。
-- **灯箱不锁定焦点** — 它设置 `aria-modal` 并在关闭时归还焦点，但 Tab 仍可移动到背后的页面（沿袭入包前组件的行为）。
+- **灯箱无缩放与下载** — 预览仅以适配视口的尺寸渲染原图。
+- **灯箱不锁定焦点** — 它设置 `aria-modal` 并在关闭时归还焦点，但 Tab 仍可移动到背后的页面。

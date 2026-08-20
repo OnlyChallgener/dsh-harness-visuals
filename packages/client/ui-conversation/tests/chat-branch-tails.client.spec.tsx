@@ -7,13 +7,12 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-web-react'
+import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-test-runtime'
 import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
 import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
 import type {
   ChatConversationViewNode, ConversationNode,
 } from '@deepseek-ai/dsh-client-runtime/client'
-import type { ImageLoader } from '@deepseek-ai/dsh-client-ui-attachment'
 import type { ChatNodeViewProps } from '../src/client/contract/slots.ts'
 import {
   formatMessageClock, msUntilNextLocalMidnight, startOfLocalDay,
@@ -22,7 +21,7 @@ import {
   CompactionNodeView, ContextMessageNodeView, RetryNodeView, UnknownNodeView,
   UserMessageNodeView,
 } from '../src/client/chat/MessageItem.tsx'
-import { AssistantMarkdown } from '../src/client/chat/AssistantMarkdown.tsx'
+import { AssistantMarkdown, type AssistantMarkdownProps } from '../src/client/chat/AssistantMarkdown.tsx'
 import { StatsLine, type StatsLineProps } from '../src/client/chat/StatsLine.tsx'
 import { zh } from '../src/client/locales.ts'
 import { chatSnapshotFixture } from './chat-snapshot-fixture.client.ts'
@@ -39,21 +38,21 @@ afterEach(() => {
   cleanup()
   vi.useRealTimers()
   vi.unstubAllGlobals()
-  Object.defineProperty(window, 'desktop', { configurable: true, value: undefined })
 })
 
 // Mirrors the real lookup chain (conversation namespace, then common).
 const t: ChatNodeViewProps['t'] = makeTranslate(zh, commonZh)
+const renderMessageImages: AssistantMarkdownProps['renderMessageImages'] = () => null
 const RETRY_ID = 'retry-fixture' as Extract<ConversationNode, { kind: 'model-retry' }>['retryId']
 
 interface MessageItemProps {
   readonly node: ConversationNode
   readonly t: ChatNodeViewProps['t']
-  readonly loadImage?: ImageLoader
+  readonly referenceLabels?: readonly string[]
 }
 
 /** Legacy-node fixture adapter for the independently registered renderers. */
-function MessageItem({ node, t: translate, loadImage }: MessageItemProps) {
+function MessageItem({ node, t: translate, referenceLabels }: MessageItemProps) {
   const kind = node.kind === 'assistant' ? 'assistant-step' : node.kind
   const viewNode: ChatConversationViewNode = {
     key: `fixture:${node.kind}:${node.seq}`,
@@ -63,9 +62,13 @@ function MessageItem({ node, t: translate, loadImage }: MessageItemProps) {
     anchorSeq: node.seq,
     location: { kind: 'session' },
     visibility: 'visible',
-    data: node.kind === 'model-retry' ? { attempts: [node], current: node } : node,
+    data: node.kind === 'model-retry'
+      ? { attempts: [node], current: node }
+      : (node.kind === 'user' || node.kind === 'steering') && referenceLabels !== undefined
+        ? { ...node, referenceLabels }
+        : node,
   }
-  const props = { node: viewNode, loadImage, t: translate } as ChatNodeViewProps
+  const props = { node: viewNode, t: translate, renderMessageImages } as ChatNodeViewProps
   switch (node.kind) {
     case 'user':
     case 'steering':
@@ -84,6 +87,61 @@ function MessageItem({ node, t: translate, loadImage }: MessageItemProps) {
 }
 
 describe('MessageItem arms', () => {
+  it('renders an adjacent session mention as a chip even without trailing whitespace', () => {
+    const view = render(
+      <MessageItem
+        t={t}
+        referenceLabels={['你好']}
+        node={{
+          kind: 'user',
+          seq: 1,
+          time: 1_000,
+          content: [{ type: 'text', text: '@你好这个在讲啥' }] as never,
+          source: null,
+        }}
+      />,
+    )
+    expect(view.container.querySelector('[data-ref-chip="session"]')?.textContent).toBe('你好')
+    expect(view.container.querySelector('[data-ref-chip="session"] svg')).not.toBeNull()
+    expect(view.getByText('这个在讲啥')).toBeTruthy()
+    expect(view.getByText('引用会话 · 你好')).toBeTruthy()
+  })
+
+  it('renders the complete metadata-confirmed multi-word session label', () => {
+    const view = render(
+      <MessageItem
+        t={t}
+        referenceLabels={['Research notes']}
+        node={{
+          kind: 'user',
+          seq: 1,
+          time: 1_000,
+          content: [{ type: 'text', text: '@Research notes what changed?' }] as never,
+          source: null,
+        }}
+      />,
+    )
+    expect(view.container.querySelector('[data-ref-chip="session"]')?.textContent).toBe('Research notes')
+    expect(view.getByText('what changed?')).toBeTruthy()
+    expect(view.getByText('引用会话 · Research notes')).toBeTruthy()
+  })
+
+  it('renders no-extension paths as files and leaves sentence punctuation outside the reference', () => {
+    const view = render(
+      <MessageItem t={t} node={{
+        kind: 'user',
+        seq: 1,
+        time: 1_000,
+        content: [{ type: 'text', text: 'Read @Dockerfile and @src/README.md, please.' }] as never,
+        source: null,
+      }} />,
+    )
+    const files = [...view.container.querySelectorAll('[data-ref-chip="file"]')]
+    expect(files.map(file => file.textContent)).toEqual(['Dockerfile', 'README.md'])
+    expect(files.every(file => file.querySelector('svg') !== null)).toBe(true)
+    expect(view.container.textContent).toContain('README.md, please.')
+  })
+
   it('user bubbles expose clock / copy and neither branch nor edit; copy writes the text', () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.defineProperty(navigator, 'clipboard', {
@@ -136,7 +194,6 @@ describe('MessageItem arms', () => {
       configurable: true,
       value: { writeText: vi.fn().mockRejectedValue(new Error('denied')) },
     })
-    Object.defineProperty(document, 'execCommand', { configurable: true, value: undefined })
     render(
       <MessageItem t={t} node={{
         kind: 'user', seq: 1, time: 1_000,
@@ -152,87 +209,6 @@ describe('MessageItem arms', () => {
     })
     expect(screen.getByRole('button', { name: '复制' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: '复制成功' })).toBeNull()
-  })
-
-  it('renders a durable image beside OCR text and copies the image bytes', async () => {
-    const copyImage = vi.fn().mockResolvedValue(true)
-    Object.defineProperty(window, 'desktop', {
-      configurable: true,
-      value: {
-        copyImage,
-        saveImage: vi.fn().mockResolvedValue(true),
-      },
-    })
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      blob: () => Promise.resolve(new Blob([Uint8Array.of(137, 80, 78, 71)], { type: 'image/png' })),
-    }))
-    const loadImage = vi.fn().mockResolvedValue('blob:history')
-    const attachment = {
-      attachmentId: 'image-copy',
-      mediaType: 'image/png',
-      bytes: 4,
-      width: 1,
-      height: 1,
-      name: 'pasted.png',
-    }
-    const view = render(
-      <MessageItem
-        t={t}
-        loadImage={loadImage}
-        node={{
-          kind: 'user', seq: 1, time: 1_000,
-          content: [
-            { type: 'image', attachment },
-            { type: 'text', text: 'OCR text must not replace the image' },
-          ] as never,
-          source: null,
-        }}
-      />,
-    )
-
-    expect(await view.findByAltText('pasted.png')).toBeTruthy()
-    expect(view.getByText('OCR text must not replace the image')).toBeTruthy()
-    fireEvent.click(view.getByRole('button', { name: '复制' }))
-    await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-    expect(copyImage).toHaveBeenCalledWith(expect.any(ArrayBuffer), 'image/png')
-    expect(view.getByRole('button', { name: '复制成功' })).toBeTruthy()
-  })
-
-  it('releases an image-copy button after the image loader rejects', async () => {
-    const loadImage = vi.fn().mockRejectedValue(new Error('attachment unavailable'))
-    const attachment = {
-      attachmentId: 'image-failed-copy',
-      mediaType: 'image/png',
-      bytes: 1,
-      width: 1,
-      height: 1,
-    }
-    const view = render(
-      <MessageItem
-        t={t}
-        loadImage={loadImage}
-        node={{
-          kind: 'user', seq: 1, time: 1_000,
-          content: [{ type: 'image', attachment }] as never,
-          source: null,
-        }}
-      />,
-    )
-
-    const copy = view.getByRole('button', { name: '复制' })
-    fireEvent.click(copy)
-    await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-    fireEvent.click(copy)
-    expect(loadImage).toHaveBeenCalledTimes(3)
-    expect(view.queryByRole('button', { name: '复制成功' })).toBeNull()
   })
 
   it('copy swaps to the check success chrome, gates re-clicks, and reverts after a second', async () => {
@@ -351,6 +327,7 @@ describe('MessageItem arms', () => {
     expect(disclosure.getAttribute('aria-expanded')).toBe('false')
     expect(ctxView.container.querySelector('[data-context-injection-body]')).toBeNull()
     expect(ctxView.container.querySelector('svg')).not.toBeNull()
+    expect(ctxView.container.querySelector('[data-context-recall-icon]')).toBeNull()
 
     fireEvent.click(disclosure)
     expect(disclosure.getAttribute('aria-expanded')).toBe('true')
@@ -803,6 +780,7 @@ describe('MessageItem arms', () => {
       } as never}
       />,
     )
+    expect(view.container.querySelector('[data-context-recall-icon]')).not.toBeNull()
     fireEvent.click(view.getByRole('button', { name: /^跨会话召回\s*重构 loader, 修 CI$/ }))
     const rows = [...view.container.querySelectorAll('[data-context-recalls] li')].map(node => node.textContent)
     expect(rows).toEqual(['重构 loader保留 18 条 · 省略 42 条已截断', '修 CI保留 3 条 · 省略 0 条'])
@@ -1034,7 +1012,12 @@ describe('useCalendarDay boundary refresh', () => {
 describe('small branch tails', () => {
   it('AssistantMarkdown single-line reasoning summary skips the newline cut', () => {
     const view = render(
-      <AssistantMarkdown t={t} blocks={[{ kind: 'reasoning', text: 'one-liner' }]} streaming={false} />,
+      <AssistantMarkdown
+        t={t}
+        blocks={[{ kind: 'reasoning', text: 'one-liner' }]}
+        streaming={false}
+        renderMessageImages={renderMessageImages}
+      />,
     )
     expect(view.getByText('one-liner')).toBeTruthy()
   })
