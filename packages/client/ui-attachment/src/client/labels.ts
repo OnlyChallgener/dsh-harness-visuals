@@ -10,7 +10,14 @@ import type { MessageImageLabels } from '../MessageImage.tsx'
  * @returns translated lightbox labels.
  */
 export function lightboxLabels(t: TranslateNS<'conversation'>): ImageLightboxLabels {
-  return { dialog: t('image.preview'), close: t('image.closePreview') }
+  return {
+    dialog: t('image.preview'),
+    close: t('image.closePreview'),
+    copied: 'Copied',
+    copy: 'Copy',
+    download: 'Download',
+    ocr: 'OCR',
+  }
 }
 
 /**
@@ -41,7 +48,12 @@ export function dropOverlayLabels(
   accepting: boolean,
   limits?: { readonly count: number; readonly size: string },
 ): DropOverlayLabels {
-  if (!accepting) return { title: t('image.dropBlocked') }
+  if (!accepting) {
+    return {
+      title: t('image.dropBlocked'),
+    }
+  }
+
   return {
     title: t('image.dropTitle'),
     desc: limits === undefined ? undefined : t('image.dropDesc', limits),
